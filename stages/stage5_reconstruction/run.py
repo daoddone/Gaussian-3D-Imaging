@@ -104,6 +104,23 @@ def run(session_dir, config_path):
     s5 = cfg.get("stage5", {})
     layout = SessionLayout(session_dir)
 
+    # ---- gsplat host (default): metric depth-supervised 3DGS + TSDF mesh -----
+    # This is the working, disk-smart Stage 5 host (DN-Splatter/AGS-Mesh loss
+    # recipe ported onto gsplat; no nerfstudio/MILo toolchain needed).
+    host = s5.get("host", "gsplat")
+    if host == "gsplat":
+        try:
+            from . import gsplat_recon
+        except ImportError:
+            import gsplat_recon
+        opts = {"iters": int(s5.get("iterations", 7000)),
+                "downscale": float(s5.get("downscale", 2.0)),
+                "depth_lambda": float(s5.get("depth_lambda", 0.2)),
+                "sh_degree": int(s5.get("sh_degree", 3))}
+        gsplat_recon.reconstruct(str(layout.root), opts)
+        return 0
+
+    # ---- MILo path (host: milo) — still gated on the flagged H1/H2 tasks -----
     # ---- routine: assemble the MILo dataset from Stage 3 metric outputs -----
     dataset_dir = layout.metric.parent / "reconstruction_input"
     info = prepare_milo_dataset(layout, dataset_dir)

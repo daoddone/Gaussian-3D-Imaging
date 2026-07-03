@@ -19,18 +19,22 @@ Two design commitments run through everything:
 
 ## Pipeline (each arrow is files on disk)
 
+The whole pipeline has been **run end-to-end on a real iPhone 14 Pro capture** —
+see [`docs/RESULTS.md`](docs/RESULTS.md).
+
 | Stage | Role | Component | Status |
 | --- | --- | --- | --- |
-| 1 · capture | iPhone LiDAR → `capture/` | AVFoundation + ARKit (Swift) | **deferred** (spec + README) |
-| 2 · frontend | poses + dense geometry → `frontend/` | Depth Anything 3 (`DA3NESTED-GIANT-LARGE`) | wrapper scaffolded |
-| 3 · metric | scale-lock + validate → `metric/` | custom (Umeyama + robust depth + ICP) | **built & verified** |
-| 4 · normals | optional prior → `normals/` | StableNormal | wrapper scaffolded (flag) |
-| 5 · reconstruction | splats + in-loop mesh | MILo + ported supervision | prep built; **2 tasks flagged** |
-| 6 · outputs | splat + mesh + provenance → `output/` | (MILo) | contract + provenance writer |
+| 1 · capture | iPhone LiDAR → `capture/` | AnatomyCapture (ARKit, Swift) | **built** (ran on device; capture validated) |
+| 2 · frontend | poses + dense geometry → `frontend/` | Depth Anything 3 (pose-conditioned) | **built & run** |
+| 3 · metric | scale-lock + validate → `metric/` | custom (Umeyama + robust depth + ICP) | **built, verified & run** (2.97 mm) |
+| 4 · normals | optional prior → `normals/` | StableNormal | **built & run** (sign gate 0.96) |
+| 5 · reconstruction | splats + mesh | **gsplat** depth+normal supervised (MILo alt flagged) | **built & run** |
+| 6 · outputs | splat + mesh + renders → `output/` | gsplat + Open3D TSDF | **produced** |
 
-Stages run in **isolated conda environments** (never merged — their deps
-conflict, notably Stage 5's older pinned toolchain) and communicate **only
-through files** following [`io_contracts/`](io_contracts/).
+Stages run in **isolated environments** (never merged — their deps conflict) and
+communicate **only through files** following [`io_contracts/`](io_contracts/).
+The metric-validation slice (Stage 3) is unit-verified; the full reconstruction
+runs on the A4000 (see `docs/RESULTS.md` for the real-data run and metrics).
 
 ## Repository layout
 

@@ -1,14 +1,44 @@
-# Stage 5 — Reconstruction host (MILo)
+# Stage 5 — Reconstruction host
 
 Builds the actual reconstruction: optimizes surface-aligned Gaussian splats to
 reproduce the captured images while respecting the metric depth and the optional
-normal prior, and extracts a surface mesh **in the loop** (not as a lossy
-afterthought). Produces the Stage 6 deliverables.
+normal prior, and extracts a surface mesh. Produces the Stage 6 deliverables.
 
-Chosen host: **MILo (Mesh-In-the-Loop Gaussian Splatting)** — state-of-the-art
-in-loop mesh with an order of magnitude fewer vertices; already renders
-differentiable depth+normal maps, which is the seam the ported supervision
-attaches to.
+## Built host: `gsplat` (depth-supervised 3DGS) — DEFAULT, WORKING
+
+`gsplat_recon.py` is the built, working host and the pipeline default
+(`config: stage5.host: gsplat`). It ports the DN-Splatter/AGS-Mesh supervision
+recipe onto **gsplat** (installed into the Stage 2 env — disk-smart, no
+nerfstudio/MILo toolchain, and it does not risk the DA3 env):
+
+- init the splats from the Stage 3 **metric** point cloud;
+- optimize with photometric (L1 + SSIM) **+ AGS-Mesh `EdgeAwareLogL1` metric
+  depth supervision** against the Stage 1 LiDAR depth (validity-masked) **+
+  optional cosine/L1 normal supervision** from Stage 4 (depth-derived predicted
+  normals vs the StableNormal prior);
+- gsplat `DefaultStrategy` densification; SH degree 3 (view-dependent color);
+- export the Gaussian splat `.ply`, and a **metric TSDF mesh** (Open3D) fused
+  from the rendered depth, plus preview renders.
+
+```bash
+conda run -n pipeline_stage2_frontend \
+  python stages/stage5_reconstruction/gsplat_recon.py --session sessions/<id> \
+  --iters 15000 --downscale 1.0 --depth-lambda 0.2 --normal-lambda 0.1
+# or via the stage entry point / orchestrator (reads config stage5.*):
+#   python stages/stage5_reconstruction/run.py --session sessions/<id> --config config/pipeline.yaml
+```
+
+Verified on real iPhone-14-Pro data (session_20260703_145121): depth-supervised,
+465k gaussians, SSIM 0.95 / PSNR ~25.6 dB, metric mesh ~20k verts, peak VRAM 2.8
+GB at 2× downscale — see `docs/RESULTS.md`.
+
+## Alternative host: MILo (still flagged H1/H2)
+
+The original **MILo** plan (state-of-the-art in-loop mesh) remains the
+`stage5.host: milo` path, still gated on the two flagged human-in-the-loop tasks
+below. It was shelved for now because it needs a second CUDA-11.8 env
+(CGAL/nvdiffrast) the disk budget can't afford and it ignores the LiDAR sensor
+depth, whereas the gsplat host consumes it directly.
 
 ## Run
 

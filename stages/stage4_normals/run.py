@@ -85,14 +85,17 @@ def run(session_dir, config_path):
     if tied:
         layout.normals_weight.mkdir(parents=True, exist_ok=True)
 
+    data_type = s4.get("data_type", "indoor")
     first_shape = None
     for fid in rgb_ids:
         img = Image.open(layout.capture_rgb / f"{fid}.png").convert("RGB")
-        # consume raw float normals, not the quantized PIL path
-        out = predictor(img, output_type="np")
-        normals_gl = np.asarray(getattr(out, "prediction", out)).squeeze()
-        if normals_gl.ndim == 3 and normals_gl.shape[0] == 3:  # (3,H,W) -> (H,W,3)
-            normals_gl = np.transpose(normals_gl, (1, 2, 0))
+        # Current Stable-X/StableNormal main API: predictor(img, data_type=...)
+        # returns a PIL image (8-bit quantized normals), NOT an object with
+        # .prediction and NO output_type kwarg. Decode to [-1,1] float. (For an
+        # unquantized float path, call predictor.model(img_resized,
+        # match_input_resolution=True).prediction[0] instead.)
+        pil = predictor(img, data_type=data_type)
+        normals_gl = np.asarray(pil).astype(np.float32) / 127.5 - 1.0  # [H,W,3] in ~[-1,1]
         normals_cv = _to_opencv_normals(normals_gl)
         np.save(layout.normals / f"{fid}.npy", normals_cv)
         first_shape = normals_cv.shape

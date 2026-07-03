@@ -98,6 +98,13 @@ def run(session_dir, config_path):
     rgb_ids = SessionLayout.list_frames(layout.capture_rgb, ".png")
     if not rgb_ids:
         raise SystemExit(f"[stage2] no rgb frames under {layout.capture_rgb}")
+    # Optional even subsample (VRAM ceiling / plumbing shakedown). Keeps the
+    # original frame ids so downstream stages still match by id.
+    max_frames = s2.get("max_frames")
+    if max_frames and len(rgb_ids) > int(max_frames):
+        idx = np.linspace(0, len(rgb_ids) - 1, int(max_frames)).round().astype(int)
+        rgb_ids = [rgb_ids[i] for i in sorted(set(idx.tolist()))]
+        print(f"[stage2] subsampling to {len(rgb_ids)} frames (stage2.max_frames={max_frames})")
     image_paths = [str(layout.capture_rgb / f"{fid}.png") for fid in rgb_ids]
 
     # optional pose conditioning from Stage 1
@@ -117,17 +124,48 @@ def run(session_dir, config_path):
             ext_in = np.stack(exts); ixt_in = np.stack(ixts)
 
     # ---- run Depth Anything 3 (requires the stage2 env: torch + GPU) --------
+    import contextlib
+    import torch
     from depth_anything_3.api import DepthAnything3  # noqa: E402
+    try:
+        from depth_anything_3.utils.memory import cleanup_cuda_memory
+        cleanup_cuda_memory()
+    except Exception:
+        pass
 
     model_id = "depth-anything/" + s2.get("model", "DA3NESTED-GIANT-LARGE")
-    model = DepthAnything3.from_pretrained(model_id).to(device="cuda")
-    pred = model.inference(
-        image=image_paths,
-        extrinsics=ext_in,
-        intrinsics=ixt_in,
-        use_ray_pose=bool(s2.get("use_ray_pose", True)),
-        align_to_input_ext_scale=ext_in is not None,
-    )
+    device = torch.device("cuda")
+    model = DepthAnything3.from_pretrained(model_id).to(device)
+
+    # Native bf16 weights halve the resident weight footprint (~3 GB reclaimed,
+    # peak VRAM ~7.6 GB vs ~14.8 GB) so more frames fit. DA3's compute path is
+    # already bf16, so fidelity is preserved (the umeyama pose alignment stays
+    # fp32). bf16 (not fp16) keeps the fp32-range exponent for the in-network
+    # geometry; Ampere (A4000) supports it. The API forces fp32 inputs, so we
+    # ALSO wrap inference in a bf16 autocast to cast those inputs to match the
+    # bf16 weights (DA3's own internal autocast does not cover every fc layer).
+    use_bf16 = bool(s2.get("bf16", True)) and torch.cuda.is_bf16_supported()
+    if use_bf16:
+        model = model.to(torch.bfloat16)
+        model.device = device
+    model.eval()
+
+    # With pose-conditioning, the pose-conditioned camera decoder (not ray
+    # re-estimation) must drive the Umeyama scale lock -> use_ray_pose = False.
+    use_ray_pose = False if ext_in is not None else bool(s2.get("use_ray_pose", True))
+    if ext_in is not None:
+        print(f"[stage2] pose-conditioning on {len(ext_in)} Stage-1 metric poses "
+              f"(use_ray_pose=False, align_to_input_ext_scale=True)")
+    infer_ctx = (torch.autocast(device_type="cuda", dtype=torch.bfloat16)
+                 if use_bf16 else contextlib.nullcontext())
+    with infer_ctx:
+        pred = model.inference(
+            image=image_paths,
+            extrinsics=ext_in,
+            intrinsics=ixt_in,
+            use_ray_pose=use_ray_pose,
+            align_to_input_ext_scale=ext_in is not None,
+        )
 
     if s2.get("free_geometry_refinement"):
         print("[stage2] WARNING: Free Geometry refinement requested but not wired here. "

@@ -1,6 +1,10 @@
 # Working data: one subfolder per capture. Excluded from version control per Section 3.5.
 sessions/
 
+# Third-party model repos cloned locally into the tree (installed per stage, not vendored).
+Depth-Anything-3/
+Free-Geometry/
+
 # Python
 __pycache__/
 *.py[cod]

@@ -246,11 +246,12 @@ def run(session_dir, config_path):
         print(f"[stage3] flags: {report['flags']}")
     print(f"[stage3] wrote {layout.metric_scale_report}")
 
-    # A single available anchor still gives a valid metric lock (the documented
-    # depth-only / no-ARKit fallback) — it is flagged as un-cross-checked but is
-    # a SOFT flag that should not halt. Genuine disagreement or no anchor is a
-    # HARD flag that halts when flag_halts_pipeline is set.
-    HARD_FLAGS = {"anchors_disagree", "no_anchor_available", "no_physical_anchor"}
+    # SOFT flags annotate but do not halt: a single anchor still gives a valid
+    # metric lock (documented depth-only fallback), and on `anchors_disagree` we
+    # now apply the highest-priority reliable anchor (ARKit VIO camera path), so
+    # the pipeline can proceed — the disagreement is recorded for review. Only a
+    # total lack of any anchor is a HARD halt (when flag_halts_pipeline is set).
+    HARD_FLAGS = {"no_anchor_available"}
     hard = any(f in HARD_FLAGS for f in report["flags"])
     halts = report["status"] == "flag" and hard and bool(s3.get("flag_halts_pipeline", True))
     return 3 if halts else 0

@@ -18,8 +18,20 @@ from __future__ import annotations
 
 import numpy as np
 
-# names considered "physical ground truth" and thus preferred on disagreement
-PHYSICAL_ANCHORS = ("physical_ruler", "sensor_depth")
+# Anchor reliability priority, applied on disagreement (highest first):
+#   physical_ruler - a known physical size in frame: true ground truth.
+#   camera_path    - ARKit VIO camera path: drift-corrected metric motion. This
+#                    is empirically the most reliable scale and gives the lowest
+#                    reconstruction-to-LiDAR residual (both with and without
+#                    pose-conditioning). When DA3 is pose-conditioned on these
+#                    poses this anchor is exactly 1.0 (ground truth); a
+#                    disagreeing depth anchor is then DA3 depth error, NOT a
+#                    scale to apply — Stage 5 supervises against the true sensor
+#                    depth, so applying the depth scale would corrupt the
+#                    ground-truth metric poses.
+#   sensor_depth   - LiDAR depth, but the learned-depth-vs-LiDAR comparison is
+#                    noisy at close range, so it is a cross-check, not the lead.
+ANCHOR_PRIORITY = ("physical_ruler", "camera_path", "sensor_depth")
 
 
 def decide_scale(anchor_scales, threshold_percent):
@@ -77,21 +89,26 @@ def decide_scale(anchor_scales, threshold_percent):
             "status": "pass",
         })
     else:
-        # disagreement: prefer physical anchors over the model's claimed scale
-        phys = [anchor_scales[n] for n in names if n in PHYSICAL_ANCHORS]
-        if phys:
-            result.update({
-                "applied_scale": float(np.median(phys)),
-                "applied_scale_source": "physical_priority",
-                "status": "flag",
-                "flags": ["anchors_disagree"],
-            })
-        else:
+        # disagreement: apply the highest-priority available anchor (true
+        # physical ground truth > ARKit VIO camera path > noisy LiDAR-vs-learned
+        # depth). Never average across disagreeing anchors; record the flag.
+        applied = None
+        for name in ANCHOR_PRIORITY:
+            if name in names:
+                applied = float(anchor_scales[name])
+                result.update({
+                    "applied_scale": applied,
+                    "applied_scale_source": f"priority:{name}",
+                    "status": "flag",
+                    "flags": ["anchors_disagree"],
+                })
+                break
+        if applied is None:  # only unknown anchor names present (shouldn't happen)
             result.update({
                 "applied_scale": float(np.median(vals)),
-                "applied_scale_source": "median_no_physical_anchor",
+                "applied_scale_source": "median_fallback",
                 "status": "flag",
-                "flags": ["anchors_disagree", "no_physical_anchor"],
+                "flags": ["anchors_disagree"],
             })
     return result
 
