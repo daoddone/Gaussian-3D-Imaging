@@ -1,0 +1,119 @@
+# Pipeline configuration (Section 3.5 / Section 6 of the build specification).
+#
+# The top-level coordinator (orchestrate.py) reads this to decide which stages
+# to run and how to invoke each one. It never imports stage code; it launches
+# each stage as a subprocess inside that stage's own conda environment:
+#
+#   conda run -n <env> python stages/<stage>/run.py --session <dir> --config <this file>
+#
+# Every stage exposes the same entry-point signature (--session, --config).
+
+# ---------------------------------------------------------------------------
+# Stages. `enabled: false` skips a stage (Stage 4 is the keep/remove flag).
+# `env` is the conda environment name; `entry` is the run.py path from repo root.
+# ---------------------------------------------------------------------------
+stages:
+  stage2_frontend:
+    enabled: true
+    env: pipeline_stage2_frontend
+    entry: stages/stage2_frontend/run.py
+
+  stage3_metric:
+    enabled: true
+    env: pipeline_stage3_metric
+    entry: stages/stage3_metric/run.py
+
+  stage4_normals:
+    # Decided empirically by Section 8 Experiment B. Off by default until it
+    # earns its place (a component earns a place by measurably helping).
+    enabled: false
+    env: pipeline_stage4_normals
+    entry: stages/stage4_normals/run.py
+
+  stage5_reconstruction:
+    enabled: true
+    env: pipeline_stage5_reconstruction
+    entry: stages/stage5_reconstruction/run.py
+
+# ---------------------------------------------------------------------------
+# Stage 2 (front end) options.
+# ---------------------------------------------------------------------------
+stage2:
+  model: DA3NESTED-GIANT-LARGE          # nested giant+metric, outputs meters
+  use_ray_pose: true                    # slightly more accurate poses if runtime permits
+  free_geometry_refinement: false       # optional test-time refinement (Free Geometry)
+  pose_conditioning: false              # condition on Stage 1 poses/intrinsics if available
+  export_formats: [ply, npz]
+
+# ---------------------------------------------------------------------------
+# Stage 3 (metric alignment) thresholds. Consumed by stages/stage3_metric.
+# ---------------------------------------------------------------------------
+stage3:
+  # How far apart the per-anchor scale estimates may be (percent) before the
+  # session is flagged rather than trusted. Default suggestion: 3%.
+  agreement_threshold_percent: 3.0
+
+  # Below this inlier fraction the depth anchor is treated as UNAVAILABLE
+  # rather than trusted.
+  min_depth_inlier_fraction: 0.30
+
+  # Robust depth-scale fit.
+  depth:
+    min_valid_depth_m: 0.05             # ignore sensor readings closer than this
+    max_valid_depth_m: 5.0              # ignore sensor readings farther than this
+    ransac_iterations: 200
+    ransac_inlier_tol: 0.02             # relative residual tolerance for an inlier
+    # Fit an additive depth offset b in sensor ~= s*front + b. OFF by default:
+    # scale and offset are degenerate over a narrow depth range. Enable only for
+    # wide-depth-range scenes (Experiment A tests the pure-scale assumption).
+    fit_offset: false
+
+  # Optional Iterative Closest Point refinement (needs open3d; skipped if absent).
+  icp:
+    enabled: true
+    max_correspondence_distance_m: 0.02
+    max_iterations: 50
+
+  # Metric COLMAP model output. Populate points3D.bin from the metric point
+  # cloud (subsampled) so the model is a self-sufficient reconstruction-host
+  # init even if the host ignores an external .ply (MILo may). Contract-allowed
+  # either way (io_contracts/frontend_output.md). points_metric.ply is written
+  # regardless.
+  colmap:
+    bake_points: true
+    max_points: 100000
+
+  # Physical ruler anchor (usually absent). If a marker of known size is placed
+  # in frame, provide its size here and the detected/measured size out of band.
+  ruler:
+    known_size_meters: null
+
+  # Does a scale-disagreement flag HALT the pipeline, or merely annotate output?
+  # The coordinator reads this.
+  flag_halts_pipeline: true
+
+# ---------------------------------------------------------------------------
+# Stage 4 (normal prior) options (used only when stage enabled).
+# ---------------------------------------------------------------------------
+stage4:
+  model: StableNormal_turbo             # torch.hub variant
+  fixed_weight: 0.05                    # modest weight relative to image+depth terms
+  confidence_tied_weight: false         # add only if Experiment B shows wound distortion
+
+# ---------------------------------------------------------------------------
+# Stage 5 (reconstruction host) options.
+# ---------------------------------------------------------------------------
+stage5:
+  host: MILo                            # MILo (in-loop mesh) | dn_splatter (fallback)
+  metric_depth_supervision: true        # AGS-Mesh edge-aware depth loss (ported)
+  normal_supervision: auto              # auto = follow stage4.enabled
+  confidence_masking: true              # Stage 1 mask + AGS-Mesh consistency mask
+  metric_initialization: true           # init splats from metric point cloud
+  densification: mini-splatting2        # mini-splatting2 (built-in) | mcmc (optional)
+  iterations: 30000
+
+# ---------------------------------------------------------------------------
+# Paths.
+# ---------------------------------------------------------------------------
+paths:
+  sessions_root: sessions

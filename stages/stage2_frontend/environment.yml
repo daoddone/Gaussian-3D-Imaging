@@ -1,0 +1,25 @@
+# Stage 2: front end (Depth Anything 3). Isolated environment, never merged.
+# Create:  conda env create -f stages/stage2_frontend/environment.yml
+# Then (see README.md for the repo clone + pinned gsplat commit):
+#   conda run -n pipeline_stage2_frontend pip install -e ./common
+name: pipeline_stage2_frontend
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - "torch>=2"
+      - torchvision
+      - xformers
+      - numpy
+      - pyyaml
+      - pillow
+      - pycolmap            # DA3's colmap export path (optional; we also write COLMAP ourselves)
+      # Depth Anything 3 itself is installed from a clone (src-layout):
+      #   git clone https://github.com/ByteDance-Seed/Depth-Anything-3
+      #   pip install -e ./Depth-Anything-3
+      # Gaussian head (only if infer_gs is used) needs the PINNED gsplat commit:
+      #   pip install --no-build-isolation \
+      #     git+https://github.com/nerfstudio-project/gsplat.git@0b4dddf04cb687367602c01196913cde6a743d70
+      # Model weights auto-download from the HF hub on first from_pretrained().

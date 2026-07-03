@@ -1,0 +1,49 @@
+# XcodeGen spec for the AnatomyCapture iOS app (Stage 1).
+#
+#   brew install xcodegen
+#   cd stages/stage1_capture
+#   xcodegen generate            # produces AnatomyCapture.xcodeproj (gitignored)
+#   open AnatomyCapture.xcodeproj # set your Signing Team, then Run on the device
+#
+# The generated .xcodeproj is a build artifact and is gitignored; project.yml is
+# the checked-in source of truth (a hand-written project.pbxproj at objectVersion
+# 77 is too fragile to author blind — one bad UUID corrupts it).
+
+name: AnatomyCapture
+
+options:
+  bundleIdPrefix: com.example
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    # Traditional isolation model: types are nonisolated unless explicitly
+    # @MainActor. Matches this codebase (nonisolated capture path, @MainActor
+    # model/UI). Do NOT flip to MainActor-default — it would mis-isolate the
+    # delegate/writer path. See IOS_NOTES.md §2.
+    SWIFT_DEFAULT_ACTOR_ISOLATION: nonisolated
+    SWIFT_APPROACHABLE_CONCURRENCY: YES
+    TARGETED_DEVICE_FAMILY: "1"          # iPhone
+    MARKETING_VERSION: "1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    # Set your team in Xcode (Signing & Capabilities) or here:
+    DEVELOPMENT_TEAM: ""
+    CODE_SIGN_STYLE: Automatic
+
+targets:
+  AnatomyCapture:
+    type: application
+    platform: iOS
+    sources:
+      - path: AnatomyCapture
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.example.anatomycapture
+        PRODUCT_NAME: AnatomyCapture
+        INFOPLIST_FILE: AnatomyCapture/Info.plist
+        GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor

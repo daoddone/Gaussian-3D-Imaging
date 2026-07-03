@@ -1,0 +1,40 @@
+# Working data: one subfolder per capture. Excluded from version control per Section 3.5.
+sessions/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Conda / environment scratch
+*.conda
+*.tar.bz2
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Model weights and large caches (downloaded on first use, never committed)
+*.ckpt
+*.safetensors
+*.pth
+weights/
+.cache/
+
+# iOS / Xcode (Stage 1 app). The .xcodeproj is generated from project.yml by
+# XcodeGen; project.yml is the checked-in source of truth.
+*.xcodeproj/
+DerivedData/
+build/
+*.xcuserstate
+xcuserdata/
+*.ipa
+.swiftpm/

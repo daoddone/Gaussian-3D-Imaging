@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pipeline-common"
+version = "0.1.0"
+description = "Dependency-light shared helpers for the staged reconstruction pipeline (stdlib + numpy only)."
+readme = "README.md"
+requires-python = ">=3.9"
+# The dependency-light rule: nothing heavier than numpy may appear here.
+dependencies = ["numpy"]
+
+[tool.setuptools]
+# The package `common` IS this directory. `pip install -e ./common` (run from the
+# repo root) then makes `import common.colmap_io` work inside every stage env.
+packages = ["common"]
+package-dir = { "common" = "." }
+
+[tool.setuptools.package-data]
+common = ["README.md"]

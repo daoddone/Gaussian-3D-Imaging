@@ -1,0 +1,21 @@
+# Stage 4: surface-normal prior (StableNormal). Isolated env, never merged.
+# OPTIONAL stage — enabled/disabled by config (Section 8 Experiment B decides).
+# Create:  conda env create -f stages/stage4_normals/environment.yml
+# Then:    conda run -n pipeline_stage4_normals pip install -e ./common
+name: pipeline_stage4_normals
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+      - "torch>=2"
+      - torchvision
+      - diffusers
+      - xformers
+      - numpy
+      - pillow
+      - pyyaml
+      # StableNormal loads via torch.hub.load("Stable-X/StableNormal",
+      # "StableNormal_turbo", trust_repo=True); weights cache to the torch hub
+      # dir on first use. DSINE (lighter swap) would negate only the Z channel.

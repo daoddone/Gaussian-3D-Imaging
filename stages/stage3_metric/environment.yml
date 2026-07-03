@@ -1,0 +1,18 @@
+# Stage 3: metric alignment and validation.
+# Isolated conda environment (never merged with other stages).
+# Create:   conda env create -f stages/stage3_metric/environment.yml
+# Then:     conda run -n pipeline_stage3_metric pip install -e ./common
+name: pipeline_stage3_metric
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - numpy
+  - scipy
+  - pyyaml
+  - pillow            # reading the confidence PNG masks
+  - pip
+  - pip:
+      - open3d        # ICP + point-cloud tooling (pip build is the maintained one)
+      # The independent MapAnything metric cross-check runs in its OWN env
+      # (Python 3.12); it is NOT installed here. See README.md.

@@ -1,0 +1,36 @@
+# Stage 5: reconstruction host (MILo). Isolated env on the OLDER PINNED toolchain.
+# Never merged — this is exactly why the stages are environment-isolated.
+#
+# ⚠️ From-source GPU compilation happens here and is a KNOWN FAILURE POINT (task
+#    H1). Follow the MILo repo's setup EXACTLY; do not treat this as routine.
+#
+# Create:  conda env create -f stages/stage5_reconstruction/environment.yml
+# Then, inside the env, following https://github.com/Anttwo/MILo :
+#   - build the differentiable rasterizer submodules (2DGS / 3DGS variants)
+#   - build the nearest-neighbor helper
+#   - install nvdiffrast
+#   - install COLMAP (system package or from source) for data prep
+#   conda run -n pipeline_stage5_reconstruction pip install -e ./common
+name: pipeline_stage5_reconstruction
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+dependencies:
+  - python=3.9
+  - pytorch=2.3.1
+  - torchvision
+  - pytorch-cuda=11.8          # CUDA 11.8 toolchain, per the MILo repo
+  - cudatoolkit-dev=11.8       # nvcc for building the rasterizer submodules
+  - ninja
+  - cmake
+  - plyfile
+  - numpy
+  - pyyaml
+  - pillow
+  - pip
+  - pip:
+      - nvdiffrast             # differentiable triangle rasterization
+      # MILo itself + its submodules are built from the cloned repo (see above).
+      # DN-Splatter/AGS-Mesh is cloned separately as the source of the ported
+      # supervision recipe (task H2) — it is NOT installed into this env.
