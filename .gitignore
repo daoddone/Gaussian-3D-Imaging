@@ -40,3 +40,6 @@ xcuserdata/
 .swiftpm/
 .swift-version
 swiftly.pkg
+
+# sweetpad / xcode-build-server integration for VS Code (regenerated per machine)
+buildServer.json
