@@ -38,3 +38,5 @@ build/
 xcuserdata/
 *.ipa
 .swiftpm/
+.swift-version
+swiftly.pkg
