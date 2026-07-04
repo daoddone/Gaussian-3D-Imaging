@@ -142,3 +142,18 @@ back to metric, write point_cloud.ply + mesh.ply + provenance). run.py _host_rea
 the milo env + compiled submodules + the two H2 files (NOT `import milo`, wrong env). Set
 config stage5.host: milo to select it. Mesh -> <out>/mesh_learnable_sdf.ply (learnable-SDF
 Marching-Tetrahedra); gaussians -> <out>/point_cloud/iteration_N/point_cloud.ply.
+
+**First full depth-supervised run RESULT (face, 18k iters, radegs indoor, depth_lambda 0.2):**
+- MILo mesh is quantitatively SMOOTHER than the gsplat TSDF: surface-roughness (dihedral angle
+  between adjacent faces, shading-independent) MEDIAN 9.6deg vs gsplat de-doubled 19.5deg vs
+  gsplat default TSDF 16.2deg -> ~half the roughness. The mesh-quality upgrade is realized even
+  untuned. Largest component = 88% of faces (190825v) = one connected surface (the 1036 "comps"
+  are tiny background floaters = 12%). NOTE: a flat per-triangle-normal render makes ANY mesh look
+  faceted/spiky -- trust the dihedral metric, not that viz.
+- MILo reconstructs the WHOLE scene (extent 693x634x875mm incl. background) vs the face-cropped
+  gsplat mesh -> for the clinical deliverable, crop MILo to the anatomy bbox / largest component.
+- Appearance (MILo gaussians rendered via gsplat, a convention mismatch -> LOWER BOUND): PSNR 23.5
+  vs gsplat-30k 27.2. Expected: MILo trades radiance for surface alignment (user: MILo is a mesh
+  upgrade, not an image-quality one) + eval renders radegs-trained gaussians with the wrong rasterizer.
+- Tuning levers to try next (not yet done): --mesh_config highres, --dense_gaussians, more iters,
+  face-crop, depth_lambda sweep. First run already beats the TSDF on smoothness.
