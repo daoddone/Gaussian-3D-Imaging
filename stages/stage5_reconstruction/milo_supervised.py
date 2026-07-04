@@ -167,6 +167,8 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
     depth_lambda = float(opt.get("depth_lambda", 0.2))
     imp_metric = opt.get("imp_metric", "indoor")
     resolution = str(opt.get("milo_resolution", 1))          # -r (1 = full res as-loaded)
+    dense = bool(opt.get("dense_gaussians", True))           # default ON (recovers thin structure)
+    data_device = str(opt.get("data_device", "cpu"))         # "cpu" fits the A4000; "cuda" is faster on the A6000
 
     # 1) scene scale -> ~unit range for the rasterizer
     radius = _nerf_radius(dataset_dir / "sparse" / "0")
@@ -174,7 +176,8 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
     scaled_ds = output_dir / "_scaled_dataset"
     n_imgs = _write_scaled_dataset(dataset_dir, scaled_ds, S)
     raw_out = output_dir / "_milo_raw"
-    print(f"[milo] nerf_radius={radius:.4f} -> scale S={S:.3f}; {n_imgs} imgs; depth_lambda={depth_lambda}")
+    print(f"[milo] nerf_radius={radius:.4f} -> scale S={S:.3f}; {n_imgs} imgs; "
+          f"depth_lambda={depth_lambda}; dense={dense}; data_device={data_device}")
 
     env = dict(os.environ)
     env["CUDA_HOME"] = str(MILO_ENV)
@@ -187,7 +190,12 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
     train_cmd = [str(MILO_ENV_PY), "train.py", "-s", str(scaled_ds), "-m", str(raw_out),
                  "--imp_metric", imp_metric, "--rasterizer", "radegs", "-r", resolution, "--quiet",
                  "--lidar_depth_dir", str(capture_dir), "--lidar_depth_lambda", str(depth_lambda),
-                 "--lidar_depth_scale", str(S)]
+                 "--lidar_depth_scale", str(S), "--data_device", data_device]
+    if dense:
+        # --dense_gaussians recovers thin structure (glasses frame, edges) the base densifier drops.
+        # Tradeoff: it slightly roughens flat regions (redistribution, not a strict win). REVISIT on the
+        # A6000 — tune MILo's regularizers + add feature-preserving smoothing (docs/EXPERIMENTS_BACKLOG.md).
+        train_cmd.append("--dense_gaussians")
     subprocess.run(train_cmd, cwd=str(MILO_DIR), env=env, check=True)
     subprocess.run([str(MILO_ENV_PY), "mesh_extract_sdf.py", "-s", str(scaled_ds), "-m", str(raw_out),
                     "--rasterizer", "radegs"], cwd=str(MILO_DIR), env=env, check=True)

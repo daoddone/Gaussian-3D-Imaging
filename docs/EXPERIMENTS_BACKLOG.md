@@ -124,3 +124,24 @@ min) → less bias → **predicts a SMALLER LiDAR-vs-VIO scale disagreement than
 shows ~12% → explanation WRONG (systematic LiDAR/VIO issue), reopen the scale question. Config has
 `stage3.flag_halts_pipeline: true`, so orchestrate.py will halt at Stage 3 on a flag — that halt is
 where the scale_report lands; inspect it, then continue Stage 5 for the reconstruction/pose tests.
+
+---
+
+## QUEUED — Revisit dense_gaussians tuning on the A6000 (owner-flagged 2026-07-04)
+
+`dense_gaussians` is now the Stage-5 **default** (`milo_supervised.py`, `opt["dense_gaussians"]=True`).
+It recovers thin structure the base densifier drops (sunglasses frame, edges) — confirmed on the
+sunglasses object. **Known tradeoff (owner-observed):** it slightly roughens flat regions (e.g. the
+table) — this is redistribution of gaussians toward high-frequency detail, NOT a strict quality win.
+The `largest-component` / clean removal that would flatten this is deliberately NOT applied, because
+it also deletes the thin structures we want (why the Stage-5 mesh crop is box+pad only).
+
+**Revisit on the A6000 (48 GB — full-res + `data_device=cuda`, no VRAM pressure):**
+1. **Tune MILo's regularizers** to keep the thin-structure gain while calming flat-surface roughness
+   (normal-consistency / distortion / opacity regularizer weights; densify thresholds).
+2. **Feature-preserving smoothing** as a post-step (e.g. bilateral / cotangent-weighted Laplacian with
+   an edge stop) — apply ONLY if it provably preserves metric fidelity vs the gaussian point cloud
+   (measure Chamfer + extent before/after; the point cloud is the fidelity reference, mesh follows it).
+3. Re-A/B dense vs base on a flat-heavy AND a thin-heavy subject; record numbers here, not just eyeball.
+   To disable dense meanwhile: pass `stage5 options.dense_gaussians=false`. `data_device` defaults to
+   `cpu` (A4000-safe); set `cuda` on the A6000 for speed.
