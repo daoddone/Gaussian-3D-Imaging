@@ -2,11 +2,8 @@ import SwiftUI
 import ARKit
 import RealityKit
 
-/// The live camera preview backed by a RealityKit `ARView` (SceneKit's
-/// `ARSCNView` is deprecated in iOS 26). The `ARView` owns the `ARSession`; we
-/// hand it to the model, which configures/runs it and attaches the delegate.
-/// `automaticallyConfigureSession = false` so RealityKit does not override the
-/// depth/world-tracking configuration we set.
+/// ARKit live preview (RealityKit `ARView` owns the `ARSession`). `dismantleUIView` pauses the
+/// session when SwiftUI swaps to the AVFoundation preview, so only one backend owns the camera.
 struct ARViewContainer: UIViewRepresentable {
     let model: CaptureModel
 
@@ -18,11 +15,13 @@ struct ARViewContainer: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: ARView, context: Context) {}
+
+    static func dismantleUIView(_ uiView: ARView, coordinator: ()) {
+        uiView.session.pause()
+    }
 }
 
-/// Capture-guidance overlay: a centered reticle plus a slow-orbit hint. The
-/// build spec asks for "a target reticle and a speed indicator" — coverage
-/// (frames) and pace (elapsed vs the 20 s budget) are shown below.
+/// Centered reticle + crosshair guidance overlay.
 struct ReticleOverlay: View {
     var body: some View {
         GeometryReader { geo in
@@ -47,7 +46,12 @@ struct CaptureView: View {
     var body: some View {
         ZStack {
             if CaptureModel.isSupported() {
-                ARViewContainer(model: model).ignoresSafeArea()
+                // Preview branches on the selected backend; swapping tears down the other session.
+                if model.backend == .arkit {
+                    ARViewContainer(model: model).ignoresSafeArea()
+                } else {
+                    AVCapturePreview(source: model.avSource).ignoresSafeArea()
+                }
                 ReticleOverlay().ignoresSafeArea()
                 overlay
             } else {
@@ -93,10 +97,33 @@ struct CaptureView: View {
         .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
     }
 
+    /// Framework + orientation toggles + description, shown before recording (locked during).
+    private var setupControls: some View {
+        VStack(spacing: 8) {
+            Picker("Framework", selection: Binding(
+                get: { model.backend },
+                set: { model.setBackend($0) })) {
+                ForEach(CaptureBackend.allCases, id: \.self) { Text($0.uiLabel).tag($0) }
+            }.pickerStyle(.segmented)
+
+            Picker("Framing", selection: $model.orientation) {
+                ForEach(CaptureOrientation.allCases, id: \.self) { Text($0.uiLabel).tag($0) }
+            }.pickerStyle(.segmented)
+
+            TextField("Description (e.g. left forearm flap, post-debridement)",
+                      text: $model.captureDescription)
+                .textFieldStyle(.roundedBorder).font(.caption)
+        }
+        .padding(10)
+        .background(.black.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
+        .frame(maxWidth: 420)
+    }
+
     @ViewBuilder private var bottomControls: some View {
         switch model.phase {
         case .idle, .previewing:
-            VStack(spacing: 8) {
+            VStack(spacing: 10) {
+                setupControls
                 Text("Center the region, hold ~30 cm, orbit slowly (finish in ~20 s).")
                     .font(.caption).foregroundStyle(.white).padding(.horizontal, 12)
                     .padding(.vertical, 6).background(.black.opacity(0.35), in: Capsule())
@@ -116,7 +143,7 @@ struct CaptureView: View {
             ProgressView("Saving…").tint(.white).foregroundStyle(.white)
                 .padding().background(.black.opacity(0.4), in: RoundedRectangle(cornerRadius: 12))
         case .finished(let dir):
-            finishedControls(dir: dir)
+            reviewControls(dir: dir)
         case .failed(let message):
             VStack(spacing: 10) {
                 Text(message).font(.callout).foregroundStyle(.white).multilineTextAlignment(.center)
@@ -136,29 +163,38 @@ struct CaptureView: View {
         .accessibilityLabel("Start recording")
     }
 
-    private func finishedControls(dir: URL) -> some View {
+    /// Review-before-send: transmit, share, or discard & re-record. Nothing is auto-sent.
+    private func reviewControls(dir: URL) -> some View {
         VStack(spacing: 10) {
-            Label("\(model.frameCount) frames saved", systemImage: "checkmark.circle.fill")
+            Label("\(model.frameCount) frames — \(model.backend.uiLabel)", systemImage: "checkmark.circle.fill")
                 .font(.headline).foregroundStyle(.green)
-            Text("In Files: On My iPhone → AnatomyCapture → sessions → \(dir.deletingLastPathComponent().lastPathComponent)")
-                .font(.caption2).foregroundStyle(.white).multilineTextAlignment(.center)
-                .padding(.horizontal, 12)
+            TextField("Description", text: $model.captureDescription)
+                .textFieldStyle(.roundedBorder).font(.caption).frame(maxWidth: 420)
+            if !model.uploadMessage.isEmpty {
+                Text(model.uploadMessage).font(.caption2).foregroundStyle(.yellow)
+            }
             HStack(spacing: 12) {
+                Button { model.transmit() } label: {
+                    Label("Transmit", systemImage: "antenna.radiowaves.left.and.right")
+                        .padding(.horizontal, 18).padding(.vertical, 10)
+                        .background(model.exportURL == nil ? .gray : .blue, in: Capsule())
+                        .foregroundStyle(.white)
+                }.disabled(model.exportURL == nil)
+
                 if let url = model.exportURL {
                     ShareLink(item: url) {
-                        Label("Share .zip", systemImage: "square.and.arrow.up")
-                            .padding(.horizontal, 18).padding(.vertical, 10)
-                            .background(.blue, in: Capsule()).foregroundStyle(.white)
+                        Image(systemName: "square.and.arrow.up")
+                            .padding(12).background(.white.opacity(0.2), in: Circle()).foregroundStyle(.white)
                     }
-                } else {
-                    ProgressView("Zipping…").tint(.white).foregroundStyle(.white)
                 }
-                Button("New capture") { model.reset() }
+                Button("Discard & re-record") { model.reset() }
                     .padding(.horizontal, 18).padding(.vertical, 10)
                     .background(.white.opacity(0.2), in: Capsule()).foregroundStyle(.white)
             }
+            Text("In Files: On My iPhone → AnatomyCapture → sessions → \(dir.deletingLastPathComponent().lastPathComponent)")
+                .font(.caption2).foregroundStyle(.white.opacity(0.7)).multilineTextAlignment(.center)
         }
-        .padding().background(.black.opacity(0.4), in: RoundedRectangle(cornerRadius: 14))
+        .padding().background(.black.opacity(0.45), in: RoundedRectangle(cornerRadius: 14))
     }
 
     private var unsupported: some View {

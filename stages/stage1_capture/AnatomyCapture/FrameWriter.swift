@@ -78,7 +78,11 @@ final class FrameWriter: @unchecked Sendable {
         }
 
         // All three files are on disk → now (and only now) record the metadata.
-        posesJSON[name] = ["R": p.R, "t": p.t]
+        // Pose is optional: the AVFoundation (HQ-Depth) path carries none, so poses.json
+        // is omitted entirely and the Linux pipeline recovers pose via unseeded SfM.
+        if let R = p.R, let t = p.t {
+            posesJSON[name] = ["R": R, "t": t]
+        }
         timestamps[name] = p.time
         if intrinsicsDoc == nil {
             intrinsicsDoc = [
@@ -92,36 +96,52 @@ final class FrameWriter: @unchecked Sendable {
         frameCount += 1
     }
 
-    /// Write intrinsics.json, poses.json, timestamps.json, README, and return a
-    /// summary. Runs after all pending appends (serial FIFO).
-    func finalize(sessionID: String, depthMode: String, confidenceThreshold: String,
-                  trackingWasNormalThroughout: Bool) async -> Result {
+    /// Write intrinsics.json, poses.json (only if a pose stream exists), timestamps.json,
+    /// metadata.json, README, and return a summary. Runs after all pending appends (serial FIFO).
+    /// `trackingWasNormalThroughout` / `confidenceNote` are ARKit-specific (pass nil for HQ-Depth).
+    func finalize(metadata: CaptureMetadata,
+                  trackingWasNormalThroughout: Bool?,
+                  confidenceNote: String) async -> Result {
         await withCheckedContinuation { cont in
             io.async {
                 if let intr = self.intrinsicsDoc {
                     self.writeJSON(intr, to: self.captureDir.appendingPathComponent("intrinsics.json"))
                 }
-                self.writeJSON(["convention": "OpenCV",
-                                "pose_type": "camera_to_world",
-                                "poses": self.posesJSON],
-                               to: self.captureDir.appendingPathComponent("poses.json"))
+                // Pose stream is present only for ARKit; omit poses.json entirely otherwise so the
+                // pipeline knows to run unseeded SfM (metadata.provides_pose = false says the same).
+                let hasPoses = !self.posesJSON.isEmpty
+                if hasPoses {
+                    self.writeJSON(["convention": "OpenCV",
+                                    "pose_type": "camera_to_world",
+                                    "poses": self.posesJSON],
+                                   to: self.captureDir.appendingPathComponent("poses.json"))
+                }
                 self.writeJSON(["unit": "seconds", "timestamps": self.timestamps],
                                to: self.captureDir.appendingPathComponent("timestamps.json"))
 
+                var metaDoc = metadata.dictionary()
+                metaDoc["frame_count"] = self.frameCount          // authoritative post-write count
+                metaDoc["has_poses"] = hasPoses
+                self.writeJSON(metaDoc, to: self.captureDir.appendingPathComponent("metadata.json"))
+
                 let colorRes = (self.intrinsicsDoc?["color_resolution"] as? [Int]) ?? [0, 0]
                 let depthRes = (self.intrinsicsDoc?["depth_resolution"] as? [Int]) ?? [0, 0]
+                let trackingLine = trackingWasNormalThroughout.map {
+                    "Tracking stayed normal throughout: \($0 ? "yes" : "NO — inspect before trusting").\n"
+                } ?? ""
                 let readme = """
-                Capture session: \(sessionID)
+                Capture session: \(metadata.sessionID)
+                Description: \(metadata.description.isEmpty ? "(none)" : metadata.description)
+                Framework: \(metadata.backend.rawValue)   Orientation(framing): \(metadata.orientation.rawValue)
                 Coordinate convention: OpenCV (camera looks down +z, x right, y down).
                 Units: meters, float32.
                 color_resolution: \(colorRes[0])x\(colorRes[1])   (rgb/*.png, lossless)
                 depth_resolution: \(depthRes[0])x\(depthRes[1])   (depth/*.npy, float32 [H,W], NaN = invalid)
-                Pose stream present: yes (poses.json, camera_to_world, metric).
-                Depth source: ARKit \(depthMode) (LiDAR, temporally processed; not raw AVFoundation depth).
-                Confidence: depth marked valid (255) where ARConfidenceLevel >= \(confidenceThreshold); else NaN / 0.
-                World frame: gravity-aligned (Y up); world yaw is arbitrary at session start.
-                Tracking stayed normal throughout: \(trackingWasNormalThroughout ? "yes" : "NO — inspect before trusting").
-                Frames: \(self.frameCount).
+                Pose stream present: \(hasPoses ? "yes (poses.json, camera_to_world, metric)" : "NO — recover pose via unseeded SfM").
+                Depth source: \(metadata.depthSource).
+                Confidence: \(confidenceNote)
+                World frame: \(hasPoses ? "gravity-aligned (Y up); world yaw arbitrary at start" : "n/a (no live tracking)").
+                \(trackingLine)Frames: \(self.frameCount).
                 Produced by AnatomyCapture (Stage 1). See io_contracts/capture_session.md.
                 """
                 try? readme.data(using: .utf8)?.write(

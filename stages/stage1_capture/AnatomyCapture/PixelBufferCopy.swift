@@ -18,8 +18,8 @@ struct FramePayload: @unchecked Sendable {
     let mask: [UInt8]           // 255 valid / 0 invalid, [H,W]
     let depthW: Int
     let depthH: Int
-    let R: [[Double]]           // OpenCV camera_to_world rotation (row-major)
-    let t: [Double]             // camera position, meters
+    let R: [[Double]]?          // OpenCV camera_to_world rotation (row-major); nil for AVFoundation (no pose)
+    let t: [Double]?            // camera position, meters; nil for AVFoundation
     let K: [[Double]]           // intrinsics at color resolution
     let time: Double            // seconds, relative to first kept frame
     let validDepthFraction: Double
@@ -82,6 +82,36 @@ enum PixelBufferCopy {
                 let d = drow[x]
                 let conf = crow?[x] ?? 2   // no confidence buffer → treat as high
                 if d.isFinite && d > 0 && conf >= threshold {
+                    out[base + x] = d
+                    mask[base + x] = 255
+                }
+            }
+        }
+        return (out, mask, w, h)
+    }
+
+    /// AVFoundation depth path: copy a DepthFloat32 map into `[Float]` (meters) and
+    /// synthesize the validity mask from finiteness alone. Unlike ARKit, AVCaptureDepthDataOutput
+    /// gives no per-pixel confidence map — with filtering disabled, invalid pixels arrive as NaN,
+    /// so `valid = depth.isFinite && depth > 0`. The caller MUST pass a buffer already converted
+    /// to kCVPixelFormatType_DepthFloat32 (AVDepthData.converting(toDepthDataType:)).
+    static func depthFloat32AndFiniteMask(_ depth: CVPixelBuffer) -> (depth: [Float], mask: [UInt8], w: Int, h: Int) {
+        let w = CVPixelBufferGetWidth(depth)
+        let h = CVPixelBufferGetHeight(depth)
+        CVPixelBufferLockBaseAddress(depth, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depth, .readOnly) }
+        let dRow = CVPixelBufferGetBytesPerRow(depth)
+        guard let dBase = CVPixelBufferGetBaseAddress(depth) else {
+            return ([Float](repeating: .nan, count: w * h), [UInt8](repeating: 0, count: w * h), w, h)
+        }
+        var out = [Float](repeating: .nan, count: w * h)
+        var mask = [UInt8](repeating: 0, count: w * h)
+        for y in 0..<h {
+            let drow = dBase.advanced(by: y * dRow).assumingMemoryBound(to: Float32.self)
+            let base = y * w
+            for x in 0..<w {
+                let d = drow[x]
+                if d.isFinite && d > 0 {
                     out[base + x] = d
                     mask[base + x] = 255
                 }

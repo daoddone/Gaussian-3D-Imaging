@@ -5,11 +5,15 @@ import CoreGraphics
 import Metal
 import Observation
 
-/// Owns the capture lifecycle and the UI state. `@MainActor` (so SwiftUI reads
-/// are safe) and `@Observable`. The `ARSession` itself is created and owned by
-/// the RealityKit `ARView` preview and handed here via `bind(session:)`; this
-/// model configures/runs it, drives the `SessionCoordinator`, and finalizes the
-/// `FrameWriter`.
+/// Owns the capture lifecycle and the UI state. `@MainActor` + `@Observable`.
+///
+/// TWO capture backends behind a runtime toggle (only switchable when not recording):
+///   • ARKit (default): ARSession owned by the RealityKit ARView, handed here via `bind(session:)`;
+///     gives smoothed LiDAR depth + metric camera pose.
+///   • HQ-Depth: `AVFoundationCaptureSource` (owns its own AVCaptureSession); raw absolute LiDAR
+///     depth + high-res color, NO pose (pipeline recovers pose via unseeded SfM).
+/// Both feed the same `FrameWriter`. Only one may own the rear camera at a time, so switching
+/// backends pauses/stops the other (see `setBackend`).
 @MainActor
 @Observable
 final class CaptureModel {
@@ -30,15 +34,31 @@ final class CaptureModel {
     var trackingMessage: String = ""
     var exportURL: URL?
 
+    // Toggles + metadata (bindable from the UI; only mutate when not recording).
+    var backend: CaptureBackend = .arkit
+    var orientation: CaptureOrientation = .portrait
+    var captureDescription: String = ""
+    var uploadMessage: String = ""
+
     let coordinator: SessionCoordinator
+    private let ciContext: CIContext
+    private let colorSpace: CGColorSpace
 
     private var session: ARSession?
     private let delegateQueue = DispatchQueue(label: "ar.delegate", qos: .userInitiated)
     private var writer: FrameWriter?
     private var sessionID: String = ""
+    private var recordStartedAt = Date()
     private var safetyStop: Task<Void, Never>?
 
     let budgetSeconds: TimeInterval = 20
+
+    /// Path B source (lazily created; owns its own AVCaptureSession).
+    lazy var avSource: AVFoundationCaptureSource = {
+        let s = AVFoundationCaptureSource(ciContext: ciContext, colorSpace: colorSpace)
+        s.model = self
+        return s
+    }()
 
     init() {
         let context: CIContext = {
@@ -48,22 +68,25 @@ final class CaptureModel {
             return CIContext()
         }()
         let srgb = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+        self.ciContext = context
+        self.colorSpace = srgb
         coordinator = SessionCoordinator(ciContext: context, colorSpace: srgb,
                                          confidenceThreshold: 1, depthMode: "smoothedSceneDepth")
         coordinator.model = self
     }
 
-    /// LiDAR + depth availability on this device.
+    /// ARKit LiDAR/depth availability.
     static func isSupported() -> Bool {
         ARWorldTrackingConfiguration.isSupported &&
         (ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) ||
          ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth))
     }
 
-    /// Called by the ARView preview once the session exists: wire the delegate
-    /// and start the live camera/tracking (preview is live before recording).
+    /// Called by the ARView preview when the ARSession exists (or is recreated after a backend
+    /// swap): pause any prior session, adopt + configure this one, start live preview.
     func bind(session: ARSession) {
-        guard self.session == nil else { return }
+        if self.session === session { return }
+        self.session?.pause()
         self.session = session
         session.delegate = coordinator
         session.delegateQueue = delegateQueue
@@ -73,7 +96,7 @@ final class CaptureModel {
 
     private func runConfiguration() {
         let cfg = ARWorldTrackingConfiguration()
-        cfg.worldAlignment = .gravity                 // Y up; world yaw arbitrary at start
+        cfg.worldAlignment = .gravity
         if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
             cfg.frameSemantics = [.smoothedSceneDepth]
             coordinator.depthMode = "smoothedSceneDepth"
@@ -82,6 +105,18 @@ final class CaptureModel {
             coordinator.depthMode = "sceneDepth"
         }
         session?.run(cfg, options: [.resetTracking, .removeExistingAnchors])
+    }
+
+    /// Switch capture framework (allowed only in idle/previewing). Tears down the outgoing
+    /// backend's session so only one owns the camera; the SwiftUI preview swap starts the new one.
+    func setBackend(_ b: CaptureBackend) {
+        guard b != backend, phase == .idle || phase == .previewing else { return }
+        switch backend {
+        case .arkit:    session?.pause()
+        case .hqDepth:  avSource.stopPreview()
+        }
+        backend = b
+        trackingMessage = ""
     }
 
     // MARK: - recording
@@ -94,9 +129,12 @@ final class CaptureModel {
             let w = try FrameWriter(captureDir: dir)
             writer = w
             frameCount = 0; elapsed = 0; validDepthFraction = 0
+            recordStartedAt = Date()
             phase = .recording
-            delegateQueue.async { [coordinator] in coordinator.startWriting(writer: w) }
-            // safety net; the coordinator also self-stops at the budget/cap.
+            switch backend {
+            case .arkit:   delegateQueue.async { [coordinator] in coordinator.startWriting(writer: w) }
+            case .hqDepth: avSource.startWriting(writer: w)
+            }
             safetyStop = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: UInt64((self?.budgetSeconds ?? 20) + 1) * 1_000_000_000)
                 if self?.phase == .recording { await self?.stopRecording() }
@@ -106,10 +144,8 @@ final class CaptureModel {
         }
     }
 
-    /// Called by the coordinator (via MainActor hop) when the budget/cap is hit.
-    func finishFromBudget() {
-        Task { await stopRecording() }
-    }
+    /// Called by either source (via MainActor hop) when the budget/cap is hit.
+    func finishFromBudget() { Task { await stopRecording() } }
 
     func stopRecording() async {
         guard phase == .recording else { return }
@@ -117,14 +153,36 @@ final class CaptureModel {
         phase = .finalizing
         guard let w = writer else { phase = .failed("no writer"); return }
 
-        // Stop appends on the delegate queue (serializes after any in-flight
-        // frame), then finalize on the writer's io queue (runs after all appends).
-        let trackingNormal: Bool = await withCheckedContinuation { cont in
-            delegateQueue.async { [coordinator] in cont.resume(returning: coordinator.stopWriting()) }
+        // Stop appends (serialized after any in-flight frame), then finalize (runs after appends).
+        var trackingNormal: Bool? = nil
+        switch backend {
+        case .arkit:
+            trackingNormal = await withCheckedContinuation { cont in
+                delegateQueue.async { [coordinator] in cont.resume(returning: coordinator.stopWriting()) }
+            }
+        case .hqDepth:
+            avSource.stopWriting()
         }
-        let result = await w.finalize(sessionID: sessionID, depthMode: coordinator.depthMode,
-                                      confidenceThreshold: "medium",
-                                      trackingWasNormalThroughout: trackingNormal)
+
+        let meta = CaptureMetadata(
+            sessionID: sessionID,
+            description: captureDescription,
+            backend: backend,
+            orientation: orientation,
+            capturedAt: recordStartedAt,
+            finalizedAt: Date(),
+            frameCount: 0,                       // overwritten by writer with the authoritative count
+            providesPose: backend.providesPose,
+            depthSource: backend == .arkit
+                ? "ARKit \(coordinator.depthMode) (LiDAR, temporally processed)"
+                : "AVFoundation builtInLiDARDepthCamera (raw, absolute, unfiltered)")
+        let confidenceNote = backend == .arkit
+            ? "depth valid (255) where ARConfidenceLevel >= medium; else NaN / 0."
+            : "no per-pixel confidence; depth valid where finite (>0); holes = NaN / 0."
+
+        let result = await w.finalize(metadata: meta,
+                                      trackingWasNormalThroughout: trackingNormal,
+                                      confidenceNote: confidenceNote)
         writer = nil
 
         if result.frameCount == 0 {
@@ -134,9 +192,8 @@ final class CaptureModel {
                 trackingMessage = "\(result.errors.count) write warning(s); first: \(result.errors[0])"
             }
             exportURL = nil
+            uploadMessage = ""
             phase = .finished(result.captureDir)
-            // Build a shareable .zip off the main actor; the folder is already in
-            // Files regardless. exportURL flips on when the zip is ready.
             let dir = result.captureDir
             Task {
                 let zip = await Task.detached { Exporter.zip(directory: dir) }.value
@@ -145,7 +202,21 @@ final class CaptureModel {
         }
     }
 
-    // MARK: - coordinator callbacks (MainActor)
+    // MARK: - transmit (review screen; nothing is auto-sent)
+
+    /// Upload the finished session's zip to the Linux receiver. No-op until the zip is ready.
+    func transmit() {
+        guard let zip = exportURL else { uploadMessage = "still zipping…"; return }
+        guard UploadConfig.isConfigured else {
+            uploadMessage = "set server URL + token in Settings first"; return
+        }
+        switch Uploader.shared.upload(zipURL: zip, sessionID: sessionID) {
+        case .success:  uploadMessage = "uploading in background…"
+        case .failure(let e): uploadMessage = "upload failed: \(e.localizedDescription)"
+        }
+    }
+
+    // MARK: - source callbacks (MainActor)
 
     func note(frameCount: Int, elapsed: TimeInterval, validFraction: Double) {
         self.frameCount = frameCount
@@ -160,11 +231,15 @@ final class CaptureModel {
         phase = .failed(message)
     }
 
-    /// Return to the live preview for another capture.
+    /// Return to the live preview for another capture ("discard & re-record" also lands here).
     func reset() {
         exportURL = nil
+        uploadMessage = ""
         frameCount = 0; elapsed = 0; validDepthFraction = 0
-        phase = session == nil ? .idle : .previewing
+        switch backend {
+        case .arkit:   phase = session == nil ? .idle : .previewing
+        case .hqDepth: phase = .previewing
+        }
     }
 
     // MARK: - paths
@@ -176,8 +251,7 @@ final class CaptureModel {
         return "session_" + f.string(from: Date())
     }
 
-    /// `Documents/sessions/<id>/capture/` — visible in the Files app via the
-    /// Info.plist file-sharing keys, ready to copy into the pipeline's sessions/.
+    /// `Documents/sessions/<id>/capture/` — visible in the Files app via the Info.plist keys.
     static func captureDirectory(for id: String) throws -> URL {
         let docs = try FileManager.default.url(for: .documentDirectory, in: .userDomainMask,
                                                appropriateFor: nil, create: true)
