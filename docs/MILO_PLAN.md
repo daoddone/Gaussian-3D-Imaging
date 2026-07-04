@@ -106,6 +106,10 @@ GOF tetra_triangulation CGAL issue #16; ACM TOG 10.1145/3763339.
 
 ---
 
+> **SUBJECT NOTE (2026-07-04):** the "face" in the RESULT section below is actually session
+> 145121 = **sunglasses on a table** (dark/specular object); session 203728 = a **hand**. Metrics
+> unchanged; only the subject label was wrong.
+
 ## BUILD LOG — EXECUTED 2026-07-03/04 (H1 + H2 DONE, host wired)
 
 MILo is BUILT and depth-supervision is PORTED + validated. Env `milo`; repo `third_party/MILo`.

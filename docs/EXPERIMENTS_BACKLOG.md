@@ -7,6 +7,11 @@ and `docs/RESULTS.md`.
 Session under test: `sessions/session_20260703_145121` (48 keyframes, ARKit-unified
 capture: single ARSession, ARKit pose + LiDAR depth, 1920×1440 color).
 
+> **SUBJECT CORRECTION (2026-07-04):** session 145121 is **sunglasses on a table** (a dark,
+> specular, low-texture object), NOT a face. `session_20260703_203728` is a **hand**. Where this
+> doc says "face" or "smooth skin" below, read "the sunglasses object / its dark-specular low-texture
+> surface." No numeric finding changes — the low-texture difficulty is specular/dark, not skin.
+
 ---
 
 ## DONE — Pose bundle-adjustment experiment (Priority 1)

@@ -136,7 +136,11 @@ def _write_scaled_dataset(src_ds, dst_ds, S):
 # entry point (called by run.py)
 # --------------------------------------------------------------------------- #
 def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
-    dataset_dir, output_dir = Path(dataset_dir), Path(output_dir)
+    # MILo's train.py runs with cwd=milo/, so every path handed to the subprocess MUST be
+    # absolute (a relative dataset path makes MILo look under milo/ -> "Could not recognize
+    # scene type"). Resolve all inputs here.
+    dataset_dir, output_dir = Path(dataset_dir).resolve(), Path(output_dir).resolve()
+    capture_dir = str(Path(capture_dir).resolve())
     opt = options or {}
     depth_lambda = float(opt.get("depth_lambda", 0.2))
     imp_metric = opt.get("imp_metric", "indoor")
