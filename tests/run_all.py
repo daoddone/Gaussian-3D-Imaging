@@ -124,6 +124,15 @@ def main():
         record("colmap_cameras", len(cams) >= 1, f"{len(cams)} cameras")
         record("colmap_points_baked", len(p3d) > 0, f"{len(p3d)} points3D baked")
 
+        # per-frame device K: the synthetic capture carries K_per_frame, so Stage 3 must give each
+        # image its own camera (not one shared) and log the DA3-vs-device intrinsics comparison.
+        colmap_out = report.get("outputs", {}).get("colmap", {})
+        record("intrinsics_per_frame", colmap_out.get("intrinsics_source") == "capture_per_frame",
+               f"source={colmap_out.get('intrinsics_source')}")
+        record("colmap_per_frame_cameras", len(cams) == 8, f"{len(cams)} cameras (expect 8)")
+        record("da3_vs_device_logged", colmap_out.get("da3_vs_device_K") is not None,
+               detail="" if colmap_out.get("da3_vs_device_K") else "no comparison in report")
+
         # --- 6. Experiment A ---------------------------------------------
         section("Experiment A on synthetic session")
         outdir = Path(td) / "expA"

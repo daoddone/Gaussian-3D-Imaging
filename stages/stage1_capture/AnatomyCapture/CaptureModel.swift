@@ -46,6 +46,13 @@ final class CaptureModel {
     // the saved capture; off = plain camera video, on = LiDAR scene-reconstruction mesh drawn over it.
     var showOverlay: Bool = true
 
+    // Focus mode for the HQ-Depth path (ARKit manages its own autofocus). false = continuous
+    // autofocus (default; keeps the subject sharp as distance changes, per-frame K tracks the
+    // drift); true = locked lens for a stable static close-up. Tap-to-focus is wired in the preview.
+    var focusLocked: Bool = false {
+        didSet { if backend == .hqDepth { avSource.setFocusLocked(focusLocked) } }
+    }
+
     // Post-record 3D coverage inspector (ARKit only; nil for HQ-Depth). Feedback, not saved.
     var meshNode: SCNNode?
     var showInspector = false
@@ -108,6 +115,7 @@ final class CaptureModel {
     private func runConfiguration() {
         let cfg = ARWorldTrackingConfiguration()
         cfg.worldAlignment = .gravity
+        cfg.isAutoFocusEnabled = true            // explicit: ARKit autofocuses; per-frame K tracks it
         if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
             cfg.frameSemantics = [.smoothedSceneDepth]
             coordinator.depthMode = "smoothedSceneDepth"
@@ -143,12 +151,14 @@ final class CaptureModel {
         }
         backend = b
         trackingMessage = ""
+        if b == .hqDepth { focusLocked = false }     // fresh HQ config comes up in continuous AF
     }
 
     // MARK: - recording
 
     func startRecording() {
         guard phase == .previewing || phase == .idle else { return }
+        orientation = currentInterfaceOrientation()      // record how the phone is actually held
         do {
             sessionID = Self.makeSessionID()
             let dir = try Self.captureDirectory(for: sessionID)
@@ -287,6 +297,14 @@ final class CaptureModel {
             avSource.startPreview()          // re-arm the HQ session (recovers from a transient failure)
             phase = .previewing
         }
+    }
+
+    /// The actual interface orientation at capture time, recorded into metadata. The UI now
+    /// rotates freely (Info.plist allows portrait + landscape); saved buffers/intrinsics stay
+    /// sensor-native regardless of it (IOS_NOTES §6), so this is descriptive metadata only.
+    private func currentInterfaceOrientation() -> CaptureOrientation {
+        let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        return (scene?.interfaceOrientation.isPortrait ?? false) ? .portrait : .landscape
     }
 
     // MARK: - paths

@@ -79,6 +79,21 @@ def load_frontend_intrinsics(path):
     return Ks, res
 
 
+def load_capture_per_frame_intrinsics(path):
+    """Return ({frame_id: K_color 3x3}, color_res (w,h)) from capture/intrinsics.json's
+    optional 'K_per_frame' map: the TRUE device intrinsics per frame (they track focus
+    breathing / OIS, unlike the single first-frame K). Returns (None, None) when the field
+    is absent — i.e. legacy single-K captures, so callers fall back to the old behaviour."""
+    with open(path) as fh:
+        d = json.load(fh)
+    per = d.get("K_per_frame")
+    if not per:
+        return None, None
+    color_res = tuple(d["color_resolution"])
+    Ks = {str(fid): np.asarray(K, dtype=float) for fid, K in per.items()}
+    return Ks, color_res
+
+
 # --------------------------------------------------------------------------- #
 # per-pixel resampling of front-end depth onto the sensor grid
 # --------------------------------------------------------------------------- #

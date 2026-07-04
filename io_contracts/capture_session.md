@@ -28,12 +28,22 @@ Path: `sessions/<session_id>/capture/`
     "color_resolution": [1920, 1440],
     "depth_resolution": [320, 240],
     "intrinsic_matrix_applies_to": "color",
-    "K": [[1450.0, 0.0, 960.0], [0.0, 1450.0, 720.0], [0.0, 0.0, 1.0]]
+    "K": [[1450.0, 0.0, 960.0], [0.0, 1450.0, 720.0], [0.0, 0.0, 1.0]],
+    "K_per_frame": {
+      "000001": [[1450.0, 0.0, 960.0], [0.0, 1450.0, 720.0], [0.0, 0.0, 1.0]],
+      "000002": [[1451.3, 0.0, 960.1], [0.0, 1451.3, 719.8], [0.0, 0.0, 1.0]]
+    }
   }
   ```
 
   The matrix `K` is scaled to the color resolution it applies to. Depth pixels are related to
   color pixels by a later stage using the two resolutions.
+
+  `K_per_frame` is **optional**: a `{frame_id: 3x3}` map of the TRUE per-frame device intrinsics
+  (they drift within a session from autofocus breathing / OIS). When present, Stage 3 gives each
+  image its own COLMAP camera (per-frame K) instead of assuming the single top-level `K` for all
+  frames; the single `K` (first frame) is retained so older single-K readers keep working. Frame
+  ids match the `rgb/`, `depth/`, `poses.json`, `timestamps.json` keys.
 
 - `poses.json` ...
   Per-frame camera pose from the parallel tracking stream, in meters, already converted to the

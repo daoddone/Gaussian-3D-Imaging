@@ -22,6 +22,10 @@ final class FrameWriter: @unchecked Sendable {
     private var posesJSON: [String: [String: Any]] = [:]
     private var timestamps: [String: Double] = [:]
     private var intrinsicsDoc: [String: Any]?
+    // TRUE per-frame device intrinsics (color res), keyed by frame name. Both capture paths
+    // report K per frame; persisting them lets Stage 3 track focus breathing / OIS instead of
+    // assuming the first frame's K for the whole session. See io_contracts/capture_session.md.
+    private var perFrameK: [String: [[Double]]] = [:]
     private var frameCount = 0
     private var errors: [String] = []
 
@@ -84,13 +88,14 @@ final class FrameWriter: @unchecked Sendable {
             posesJSON[name] = ["R": R, "t": t]
         }
         timestamps[name] = p.time
+        perFrameK[name] = p.K                             // true device K for THIS frame (color res)
         if intrinsicsDoc == nil {
             intrinsicsDoc = [
                 "convention": "OpenCV",
                 "color_resolution": [p.colorW, p.colorH],
                 "depth_resolution": [p.depthW, p.depthH],
                 "intrinsic_matrix_applies_to": "color",
-                "K": p.K,
+                "K": p.K,                                 // first-frame K, kept for backward compat
             ]
         }
         frameCount += 1
@@ -104,7 +109,9 @@ final class FrameWriter: @unchecked Sendable {
                   confidenceNote: String) async -> Result {
         await withCheckedContinuation { cont in
             io.async {
-                if let intr = self.intrinsicsDoc {
+                if var intr = self.intrinsicsDoc {
+                    // Optional per-frame map; single top-level "K" above stays for legacy readers.
+                    if !self.perFrameK.isEmpty { intr["K_per_frame"] = self.perFrameK }
                     self.writeJSON(intr, to: self.captureDir.appendingPathComponent("intrinsics.json"))
                 }
                 // Pose stream is present only for ARKit; omit poses.json entirely otherwise so the

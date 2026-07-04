@@ -127,6 +127,7 @@ def main():
     K_front = K_matrix(480.0, 480.0, 256.0, 192.0)       # at front res
 
     cap_poses = {}
+    cap_K = {}
     fe_poses = {}
     fe_K = {}
     dist = 0.45
@@ -146,6 +147,12 @@ def main():
         Image.fromarray(np.zeros((color_res[1], color_res[0], 3), np.uint8)).save(
             lay.capture_rgb / f"{fid}.png")
         cap_poses[fid] = {"R": R_c2w, "t": Cc}
+        # per-frame device K: simulate ~1% autofocus breathing on the focal length across the orbit
+        Kc = K_color.copy()
+        breathe = 1.0 + 0.01 * np.sin(theta)
+        Kc[0, 0] *= breathe
+        Kc[1, 1] *= breathe
+        cap_K[fid] = Kc
 
         # front-end camera: transform metric camera by the similarity
         C_f = a * (R0 @ Cc) + t0
@@ -165,7 +172,8 @@ def main():
         json.dump({"convention": "OpenCV", "color_resolution": list(color_res),
                    "depth_resolution": list(depth_res),
                    "intrinsic_matrix_applies_to": "color",
-                   "K": K_color.tolist()}, fh, indent=2)
+                   "K": K_color.tolist(),
+                   "K_per_frame": {fid: cap_K[fid].tolist() for fid in cap_K}}, fh, indent=2)
     with open(lay.capture_timestamps, "w") as fh:
         json.dump({"unit": "seconds",
                    "timestamps": {frame_id(i + 1): round(i * 0.1, 3) for i in range(args.frames)}}, fh, indent=2)

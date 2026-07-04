@@ -31,11 +31,16 @@
 		<string>arkit</string>
 	</array>
 
-	<!-- Lock to a single landscape orientation: camera intrinsics and depth are
-	     reported in the sensor-native landscape frame and change with interface
-	     orientation on iPhone. See IOS_NOTES.md §6. -->
+	<!-- Portrait + both landscapes. Saved color/depth buffers and intrinsics are ALWAYS
+	     written in the sensor-native (un-rotated) frame regardless of interface orientation
+	     (IOS_NOTES.md §6): the capture code reads frame.camera.intrinsics / the AVCameraCalibration
+	     matrix directly and never rotates the data-output connection or bakes displayTransform in,
+	     so the UI can rotate freely while the data stays orientation-agnostic. Run the §7
+	     orientation self-test on-device once to confirm no orientation-dependent API slipped in. -->
 	<key>UISupportedInterfaceOrientations</key>
 	<array>
+		<string>UIInterfaceOrientationPortrait</string>
+		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
 	</array>
 

@@ -114,11 +114,40 @@ def _bake_points3D(metric_points, metric_colors, max_points):
     return points3D
 
 
+def _compare_capture_vs_frontend_K(layout, K_device_by_frame, device_res):
+    """Quantify device-reported vs DA3-estimated per-frame intrinsics (logging only, for the
+    'DA3 vs device K' backlog experiment). Device K (color res) is scaled to the front-end
+    resolution so the comparison is apples-to-apples. Returns per-parameter median/max relative
+    difference over the common frames, or None if the front-end intrinsics are unavailable."""
+    if not layout.frontend_intrinsics.exists():
+        return None
+    fe_Ks, fe_res = anchors.load_frontend_intrinsics(layout.frontend_intrinsics)
+    idx = {"fx": (0, 0), "fy": (1, 1), "cx": (0, 2), "cy": (1, 2)}
+    diffs = {k: [] for k in idx}
+    n = 0
+    for fid, Kd in K_device_by_frame.items():
+        Kf = fe_Ks.get(str(fid))
+        if Kf is None:
+            continue
+        Kd_s = anchors._scale_K(Kd, device_res, fe_res)      # device K -> front-end resolution
+        for key, (i, j) in idx.items():
+            denom = abs(Kf[i, j]) if abs(Kf[i, j]) > 1e-9 else 1.0
+            diffs[key].append(abs(float(Kd_s[i, j]) - float(Kf[i, j])) / denom)
+        n += 1
+    if n == 0:
+        return None
+    summary = {k: {"median_rel": float(np.median(v)), "max_rel": float(np.max(v))}
+               for k, v in diffs.items()}
+    summary["frames_compared"] = n
+    return summary
+
+
 def _transform_poses_to_colmap(layout, cfg, s, R, t, metric_points=None, metric_colors=None):
     """Transform front-end world-to-camera poses and write the metric COLMAP
-    model. Prefers the color-resolution intrinsics (shared) so the camera model
-    matches the RGB frames the reconstruction host optimizes; falls back to the
-    front-end per-frame intrinsics. Optionally bakes the metric cloud into
+    model. Intrinsics preference: true per-frame device K (one camera per image) >
+    legacy single capture K (one shared camera) > DA3 per-frame estimate — see the
+    selection block below. All are at color resolution, matching the RGB frames the
+    reconstruction host optimizes. Optionally bakes the metric cloud into
     points3D.bin as reconstruction-host init geometry."""
     if not layout.frontend_poses.exists():
         return {"written": False, "note": "frontend/poses.json missing"}
@@ -132,16 +161,35 @@ def _transform_poses_to_colmap(layout, cfg, s, R, t, metric_points=None, metric_
         R_wc2, t_wc2 = align.apply_similarity_to_w2c_pose(R_wc, t_wc, s, R, t)
         Rt_w2c[fid] = (R_wc2, t_wc2)
 
-    # choose intrinsics
+    # choose intrinsics. Preference order:
+    #   1. TRUE per-frame device K (capture 'K_per_frame') — tracks focus breathing / OIS, so
+    #      each image gets its own PINHOLE camera. This is the point of the per-frame-K work.
+    #   2. legacy single capture K (older captures) — one shared camera, as before.
+    #   3. DA3 per-frame estimate — when no capture intrinsics exist at all.
+    k_compare = None
+    cap_per_K, cap_per_res = (None, None)
     if layout.capture_intrinsics.exists():
+        cap_per_K, cap_per_res = anchors.load_capture_per_frame_intrinsics(layout.capture_intrinsics)
+
+    if cap_per_K:
+        cap = anchors.load_capture_intrinsics(layout.capture_intrinsics)
+        K_single = cap["K_color"]                       # fallback for any frame missing per-frame K
+        resolution = cap_per_res or cap["color_res"]
+        K_by_frame = {fid: cap_per_K.get(fid, K_single) for fid in frame_ids}
+        shared = False
+        intr_source = "capture_per_frame"
+        k_compare = _compare_capture_vs_frontend_K(layout, K_by_frame, resolution)
+    elif layout.capture_intrinsics.exists():
         cap = anchors.load_capture_intrinsics(layout.capture_intrinsics)
         K = cap["K_color"]
         resolution = cap["color_res"]
         K_by_frame = {fid: K for fid in frame_ids}
         shared = True
+        intr_source = "capture_shared"
     else:
         K_by_frame, resolution = anchors.load_frontend_intrinsics(layout.frontend_intrinsics)
         shared = False
+        intr_source = "frontend_per_frame"
 
     names = {fid: f"{fid}.png" for fid in frame_ids}
     cameras, images = colmap_io.build_pinhole_model(
@@ -156,7 +204,13 @@ def _transform_poses_to_colmap(layout, cfg, s, R, t, metric_points=None, metric_
 
     out_dir = layout.metric_colmap
     colmap_io.write_model(out_dir, cameras, images, points3D=points3D)
+    if k_compare:
+        print(f"[stage3] intrinsics=capture_per_frame; DA3-vs-device K rel-diff "
+              f"(median/max over {k_compare['frames_compared']} frames): "
+              f"fx {k_compare['fx']['median_rel']:.4f}/{k_compare['fx']['max_rel']:.4f}, "
+              f"fy {k_compare['fy']['median_rel']:.4f}/{k_compare['fy']['max_rel']:.4f}")
     return {"written": True, "frames": len(frame_ids), "shared_intrinsics": shared,
+            "intrinsics_source": intr_source, "da3_vs_device_K": k_compare,
             "points3D_baked": len(points3D)}
 
 

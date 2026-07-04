@@ -30,6 +30,14 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
     /// `RotationCoordinator` for a horizon-level display (display-only; see `AVCapturePreview`).
     private(set) var activeDevice: AVCaptureDevice?
 
+    /// Device to build the preview's rotation coordinator with. `AVCaptureDevice.default` returns
+    /// the same shared LiDAR singleton the session uses, so we look it up fresh (main-thread safe,
+    /// available before the async `configureIfNeeded` sets `activeDevice`) rather than read the
+    /// sessionQueue-confined `activeDevice` across threads.
+    var displayDevice: AVCaptureDevice? {
+        AVCaptureDevice.default(.builtInLiDARDepthCamera, for: .video, position: .back)
+    }
+
     private let ciContext: CIContext
     private let colorSpace: CGColorSpace
     private let sessionQueue = DispatchQueue(label: "avf.session", qos: .userInitiated)
@@ -123,6 +131,11 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
             try device.lockForConfiguration()
             device.activeFormat = colorFormat
             device.activeDepthDataFormat = depthFormat
+            // Continuous autofocus by default: without this the LiDAR device can sit at a fixed
+            // far focus (the "won't focus closer than ~12 in" symptom). Per-frame K captures the
+            // resulting focus-breathing so metric accuracy is preserved (Stage 3 uses K_per_frame).
+            if device.isFocusModeSupported(.continuousAutoFocus) { device.focusMode = .continuousAutoFocus }
+            if device.isExposureModeSupported(.continuousAutoExposure) { device.exposureMode = .continuousAutoExposure }
             device.unlockForConfiguration()
         } catch {
             lastConfigError = "could not set active formats: \(error.localizedDescription)"; return false
@@ -165,6 +178,53 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
     func stopPreviewAndWait() {
         sessionQueue.sync {
             if session.isRunning { session.stopRunning() }
+        }
+    }
+
+    // MARK: - focus control (HQ path)
+
+    /// Continuous autofocus (keeps refocusing as working distance changes — per-frame K tracks
+    /// the drift) vs locked (pins the current lens position for a stable, sharp static close-up).
+    private(set) var focusLocked = false
+
+    func setFocusLocked(_ locked: Bool) {
+        sessionQueue.async { [self] in
+            guard let device = activeDevice else { return }
+            do {
+                try device.lockForConfiguration()
+                if locked {
+                    if device.isFocusModeSupported(.locked) { device.focusMode = .locked }
+                } else if device.isFocusModeSupported(.continuousAutoFocus) {
+                    device.focusMode = .continuousAutoFocus
+                }
+                device.unlockForConfiguration()
+                focusLocked = locked
+            } catch {
+                reportFail("focus mode: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    /// Tap-to-focus at a normalized device point (0..1, sensor space; the preview converts the
+    /// on-screen tap via `captureDevicePointConverted`). In auto mode this re-centres continuous
+    /// AF on the point; in locked mode it does a one-shot focus there and then holds. Exposure
+    /// follows the same point so the region of interest is both sharp and well-exposed.
+    func focus(atDevicePoint p: CGPoint) {
+        sessionQueue.async { [self] in
+            guard let device = activeDevice else { return }
+            do {
+                try device.lockForConfiguration()
+                if device.isFocusPointOfInterestSupported { device.focusPointOfInterest = p }
+                let mode: AVCaptureDevice.FocusMode = focusLocked ? .autoFocus : .continuousAutoFocus
+                if device.isFocusModeSupported(mode) { device.focusMode = mode }
+                if device.isExposurePointOfInterestSupported { device.exposurePointOfInterest = p }
+                if device.isExposureModeSupported(.continuousAutoExposure) {
+                    device.exposureMode = .continuousAutoExposure
+                }
+                device.unlockForConfiguration()
+            } catch {
+                reportFail("tap focus: \(error.localizedDescription)")
+            }
         }
     }
 

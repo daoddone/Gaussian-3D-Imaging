@@ -127,6 +127,24 @@ where the scale_report lands; inspect it, then continue Stage 5 for the reconstr
 
 ---
 
+## QUEUED — DA3-estimated K vs device-reported K (owner-flagged 2026-07-04)
+
+Per-frame device intrinsics are now the Stage-3 default when a capture ships `K_per_frame`
+(`capture/intrinsics.json`); Stage 3 also **logs** how far DA3's per-frame estimate diverges from
+the device's reported per-frame K, into `metric/scale_report.json → outputs.colmap.da3_vs_device_K`
+(median/max relative diff of fx, fy, cx, cy, compared at the front-end resolution).
+
+**Question.** Is DA3's learned per-frame K close enough to the device's true per-frame K that we
+could later drop the device-K dependency (simplifying capture), or does DA3 miss the real
+focus-breathing / OIS drift the sensor knows about?
+
+**How to run.** Just process real captures (the log is emitted automatically) and collect the
+`da3_vs_device_K` field across sessions. Compare against the ~36 px (~2%) intra-session fx/fy
+drift ARKit reports from focus breathing. Expectation to test: DA3 tracks the *mean* K well but
+lags the per-frame *drift* (it's a per-image estimate, blind to OIS principal-point shifts). If
+median rel-diff stays < ~0.5% AND it tracks the drift direction, DA3-K is a viable fallback; if it
+flat-lines while device K moves, keep device K as the metric anchor. Tabulate results here.
+
 ## QUEUED — Revisit dense_gaussians tuning on the A6000 (owner-flagged 2026-07-04)
 
 `dense_gaussians` is now the Stage-5 **default** (`milo_supervised.py`, `opt["dense_gaussians"]=True`).

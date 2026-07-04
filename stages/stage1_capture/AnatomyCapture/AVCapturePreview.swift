@@ -4,61 +4,108 @@ import AVFoundation
 /// Live preview for the AVFoundation (HQ-Depth) path: an `AVCaptureVideoPreviewLayer` fed by
 /// the source's `AVCaptureSession`.
 ///
-/// The preview is DISPLAY ONLY — rotating it here never touches the sensor-native buffers /
-/// intrinsics the source writes (IOS_NOTES §6), so it is safe for the fidelity-safe framing.
-///
-/// FIX (owner-observed "HQ preview is rotated 90° CW"): a plain `AVCaptureVideoPreviewLayer`
-/// defaults to the device's *portrait* connection, so in this landscape-locked UI it showed the
-/// feed sideways (the ARKit `ARView` path already renders upright). We drive the preview
-/// connection's `videoRotationAngle` from an `AVCaptureDevice.RotationCoordinator`
-/// (`videoRotationAngleForHorizonLevelPreview`) — the level-horizon angle for how the phone is
-/// physically held, computed by the OS rather than a hardcoded guess, and KVO-updated if the
-/// device rotates.
+/// The preview is DISPLAY ONLY — rotating it or tapping to focus never rewrites the sensor-native
+/// buffers/intrinsics the source saves (IOS_NOTES §6). It adds two affordances:
+///  • Horizon-level rotation via `AVCaptureDevice.RotationCoordinator` (OS-computed angle, so the
+///    feed is upright in any interface orientation) — fixes the "HQ preview is 90° CW" report.
+///  • Tap-to-focus: a tap converts to a normalized device point and drives the source's focus.
 struct AVCapturePreview: UIViewRepresentable {
     let source: AVFoundationCaptureSource
 
     final class PreviewView: UIView {
         override class var layerClass: AnyClass { AVCaptureVideoPreviewLayer.self }
         var previewLayer: AVCaptureVideoPreviewLayer { layer as! AVCaptureVideoPreviewLayer }
+
+        /// Brief yellow reticle at a tap location — UX feedback that tap-to-focus registered.
+        func flashFocusIndicator(at point: CGPoint) {
+            let size: CGFloat = 72
+            let box = CALayer()
+            box.frame = CGRect(x: point.x - size / 2, y: point.y - size / 2, width: size, height: size)
+            box.borderColor = UIColor.systemYellow.cgColor
+            box.borderWidth = 1.5
+            box.cornerRadius = 4
+            layer.addSublayer(box)
+            let shrink = CABasicAnimation(keyPath: "transform.scale")
+            shrink.fromValue = 1.35; shrink.toValue = 1.0; shrink.duration = 0.25
+            box.add(shrink, forKey: nil)
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 1.0; fade.toValue = 0.0; fade.duration = 0.9
+            fade.beginTime = CACurrentMediaTime() + 0.4
+            fade.fillMode = .forwards; fade.isRemovedOnCompletion = false
+            box.add(fade, forKey: nil)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.4) { box.removeFromSuperlayer() }
+        }
     }
 
-    /// Retains the rotation coordinator + its KVO observation for the view's lifetime.
-    final class Coordinator {
+    /// Retains the rotation coordinator + KVO observation and routes taps to the source.
+    final class Coordinator: NSObject {
+        let source: AVFoundationCaptureSource
         var rotation: AVCaptureDevice.RotationCoordinator?
         var observation: NSKeyValueObservation?
+        weak var previewLayer: AVCaptureVideoPreviewLayer?
+        init(source: AVFoundationCaptureSource) { self.source = source }
+
+        /// Set the preview connection's rotation to the current horizon-level angle (no-op until
+        /// the connection exists, which happens after the source's async configuration completes).
+        func applyRotation() {
+            guard let conn = previewLayer?.connection, let coord = rotation else { return }
+            let angle = coord.videoRotationAngleForHorizonLevelPreview
+            if conn.isVideoRotationAngleSupported(angle) { conn.videoRotationAngle = angle }
+        }
+
+        /// The preview connection appears only after the session configures on its own queue; poll
+        /// briefly so the first upright frame lands even if the device never physically rotates.
+        func applyRotationWhenReady(_ attempts: Int) {
+            if previewLayer?.connection != nil { applyRotation(); return }
+            guard attempts > 0 else { return }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
+                self?.applyRotationWhenReady(attempts - 1)
+            }
+        }
+
+        @objc func handleTap(_ g: UITapGestureRecognizer) {
+            guard let view = g.view as? PreviewView else { return }
+            let layerPoint = g.location(in: view)
+            let devicePoint = view.previewLayer.captureDevicePointConverted(fromLayerPoint: layerPoint)
+            source.focus(atDevicePoint: devicePoint)
+            view.flashFocusIndicator(at: layerPoint)
+        }
     }
-    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeCoordinator() -> Coordinator { Coordinator(source: source) }
 
     func makeUIView(context: Context) -> PreviewView {
         let v = PreviewView()
+        context.coordinator.previewLayer = v.previewLayer
         v.previewLayer.session = source.session
         v.previewLayer.videoGravity = .resizeAspectFill
         source.startPreview()
 
-        // Keep the preview upright regardless of how the phone is held. Display-only: the source
-        // still writes sensor-native buffers/intrinsics (IOS_NOTES §6).
-        if let device = source.activeDevice {
+        v.addGestureRecognizer(UITapGestureRecognizer(
+            target: context.coordinator, action: #selector(Coordinator.handleTap(_:))))
+
+        // Horizon-level rotation (display-only; buffers stay sensor-native, IOS_NOTES §6).
+        if let device = source.displayDevice {
             let coord = AVCaptureDevice.RotationCoordinator(device: device, previewLayer: v.previewLayer)
             context.coordinator.rotation = coord
-            let apply: () -> Void = { [weak layer = v.previewLayer] in
-                guard let conn = layer?.connection else { return }
-                let angle = coord.videoRotationAngleForHorizonLevelPreview
-                if conn.isVideoRotationAngleSupported(angle) { conn.videoRotationAngle = angle }
-            }
-            apply()
             context.coordinator.observation = coord.observe(
                 \.videoRotationAngleForHorizonLevelPreview, options: [.initial, .new]
-            ) { _, _ in DispatchQueue.main.async { apply() } }
+            ) { [weak c = context.coordinator] _, _ in
+                DispatchQueue.main.async { c?.applyRotation() }
+            }
         }
+        context.coordinator.applyRotationWhenReady(12)   // ~1.8 s window for the async connection
         return v
     }
 
-    func updateUIView(_ uiView: PreviewView, context: Context) {}
+    // SwiftUI re-lays-out on interface rotation; re-apply so the preview tracks the new orientation.
+    func updateUIView(_ uiView: PreviewView, context: Context) { context.coordinator.applyRotation() }
 
     static func dismantleUIView(_ uiView: PreviewView, coordinator: Coordinator) {
         coordinator.observation?.invalidate()
         coordinator.observation = nil
         coordinator.rotation = nil
+        coordinator.previewLayer = nil
         uiView.previewLayer.session = nil
     }
 }

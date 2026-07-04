@@ -11,11 +11,10 @@ enum CaptureBackend: String, CaseIterable, Sendable {
     var providesPose: Bool { self == .arkit }
 }
 
-/// Framing orientation the clinician chose. FIDELITY-SAFE: this is a *record + preview*
-/// affordance only — the saved color/depth buffers and intrinsics are ALWAYS written in
-/// the sensor-native (un-rotated) frame (see IOS_NOTES.md §6, "the #1 pipeline bug"), so
-/// the reconstruction is orientation-agnostic. The value is stored purely as metadata and
-/// used to orient the on-screen preview/guidance.
+/// Framing orientation, AUTO-DETECTED from the interface orientation at record time (the UI
+/// rotates freely). FIDELITY-SAFE: the saved color/depth buffers and intrinsics are ALWAYS
+/// written in the sensor-native (un-rotated) frame (see IOS_NOTES.md §6, "the #1 pipeline bug"),
+/// so the reconstruction is orientation-agnostic. The value is descriptive metadata only.
 enum CaptureOrientation: String, CaseIterable, Sendable {
     case portrait
     case landscape

@@ -109,6 +109,19 @@ struct CaptureView: View {
                 .accessibilityLabel(model.showOverlay ? "Hide coverage mesh" : "Show coverage mesh")
                 .padding(.trailing, 6)
             }
+            // Focus toggle (HQ-Depth only; ARKit manages its own focus). Auto = continuous
+            // autofocus, Lock = pinned lens. Tap the preview anywhere to focus that point.
+            if model.backend == .hqDepth {
+                Button { model.focusLocked.toggle() } label: {
+                    Image(systemName: model.focusLocked ? "lock.circle.fill" : "a.circle")
+                        .font(.title3)
+                        .foregroundStyle(model.focusLocked ? .yellow : .white)
+                        .padding(8).background(.black.opacity(0.35), in: Circle())
+                }
+                .accessibilityLabel(model.focusLocked ? "Focus locked — tap to resume autofocus"
+                                                      : "Autofocus — tap to lock focus")
+                .padding(.trailing, 6)
+            }
             if model.phase == .recording {
                 VStack(alignment: .trailing, spacing: 4) {
                     Text("\(model.frameCount) frames").font(.headline).foregroundStyle(.white)
@@ -130,9 +143,8 @@ struct CaptureView: View {
                 ForEach(CaptureBackend.allCases, id: \.self) { Text($0.uiLabel).tag($0) }
             }.pickerStyle(.segmented)
 
-            Picker("Framing", selection: $model.orientation) {
-                ForEach(CaptureOrientation.allCases, id: \.self) { Text($0.uiLabel).tag($0) }
-            }.pickerStyle(.segmented)
+            // Framing orientation is auto-detected from how the phone is held at record time
+            // (the UI now rotates freely); no manual picker needed. Saved data stays sensor-native.
 
             TextField("Description (e.g. left forearm flap, post-debridement)",
                       text: $model.captureDescription)
@@ -148,7 +160,9 @@ struct CaptureView: View {
         case .idle, .previewing:
             VStack(spacing: 10) {
                 setupControls
-                Text("Center the region, hold ~30 cm, orbit slowly (finish in ~20 s).")
+                Text(model.backend == .hqDepth
+                     ? "Center the region, hold ~30 cm, orbit slowly (~20 s). Tap to focus."
+                     : "Center the region, hold ~30 cm, orbit slowly (finish in ~20 s).")
                     .font(.caption).foregroundStyle(.white).padding(.horizontal, 12)
                     .padding(.vertical, 6).background(.black.opacity(0.35), in: Capsule())
                 recordButton
