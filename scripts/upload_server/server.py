@@ -31,6 +31,9 @@ from urllib.parse import urlparse, parse_qs
 
 REPO = Path(__file__).resolve().parents[2]
 TOKEN = os.environ.get("UPLOAD_TOKEN", "")
+# Optional short PIN (e.g. 4 digits) the clinician enters on the phone at transmit time — a small
+# extra gate so a baked-in app token alone can't upload. Only enforced when set (X-Upload-Pin header).
+PIN = os.environ.get("UPLOAD_PIN", "")
 DEST = REPO / "sessions"
 MAX_BYTES = 500 * 1024 * 1024          # 500 MB per upload cap
 _SAFE = re.compile(r"[^A-Za-z0-9_.-]")
@@ -71,6 +74,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(404, {"error": "not found"})
         if not self._authed():
             return self._json(401, {"error": "unauthorized"})
+        if PIN and not hmac.compare_digest(self.headers.get("X-Upload-Pin", ""), PIN):
+            return self._json(401, {"error": "bad pin"})
 
         session = _clean(parse_qs(parsed.query).get("session", [""])[0])
         length = int(self.headers.get("Content-Length", 0))

@@ -42,6 +42,11 @@ final class CaptureModel {
     var captureDescription: String = ""
     var uploadMessage: String = ""
 
+    // A short PIN, entered right before each transmit (a small safety gate). Nothing is sent until
+    // the clinician confirms it, so a wrong PIN just fails the send — the recording is never lost.
+    var showPINPrompt = false
+    var pinEntry = ""
+
     // Live coverage-mesh overlay on/off (ARKit only). Display-only — toggling it never affects
     // the saved capture; off = plain camera video, on = LiDAR scene-reconstruction mesh drawn over it.
     var showOverlay: Bool = true
@@ -97,6 +102,9 @@ final class CaptureModel {
         coordinator = SessionCoordinator(ciContext: context, colorSpace: srgb,
                                          confidenceThreshold: 1, depthMode: "smoothedSceneDepth")
         coordinator.model = self
+        Uploader.shared.onComplete = { [weak self] _, ok, msg in
+            Task { @MainActor in self?.uploadMessage = ok ? "sent \u{2713}" : "failed: \(msg)" }
+        }
     }
 
     /// ARKit LiDAR/depth availability.
@@ -308,8 +316,15 @@ final class CaptureModel {
         guard UploadConfig.isConfigured else {
             uploadMessage = "set server URL + token in Settings (gear, top-left) first"; return
         }
-        guard let dir = lastCaptureDir else { uploadMessage = "nothing to send"; return }
-        guard !isPreparingUpload else { return }          // synchronous guard: one prepare at a time
+        guard lastCaptureDir != nil, !isPreparingUpload else { return }
+        pinEntry = ""
+        showPINPrompt = true          // forcibly enter the PIN before sending; nothing is sent yet
+    }
+
+    /// Called by the PIN prompt's Send button. Persists the description, rebuilds the zip fresh, and
+    /// uploads with the entered PIN. A wrong PIN just fails the send (server 401) — recording is safe.
+    func confirmTransmit(pin: String) {
+        guard let dir = lastCaptureDir, !isPreparingUpload else { return }
         isPreparingUpload = true
         syncDescriptionToDisk()                            // metadata.json reflects the latest edit
         uploadMessage = "preparing…"
@@ -325,13 +340,13 @@ final class CaptureModel {
                 self.uploadMessage = "zip failed"; return
             }
             self.exportURL = zip
-            self.startUpload(zip)
+            self.startUpload(zip, pin: pin)
         }
     }
 
-    private func startUpload(_ zip: URL) {
-        switch Uploader.shared.upload(zipURL: zip, sessionID: sessionID) {
-        case .success:  uploadMessage = "uploading in background…"
+    private func startUpload(_ zip: URL, pin: String) {
+        switch Uploader.shared.upload(zipURL: zip, sessionID: sessionID, pin: pin) {
+        case .success:  uploadMessage = "uploading…"
         case .failure(let e): uploadMessage = "upload failed: \(e.localizedDescription)"
         }
     }

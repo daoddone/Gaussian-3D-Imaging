@@ -49,6 +49,13 @@ struct CaptureView: View {
             CoverageInspectorSheet(meshNode: model.meshNode)
         }
         .sheet(isPresented: $showSettings) { SettingsView() }
+        .alert("Transmit PIN", isPresented: $model.showPINPrompt) {
+            TextField("PIN", text: $model.pinEntry).keyboardType(.numberPad)
+            Button("Send") { model.confirmTransmit(pin: model.pinEntry) }
+            Button("Cancel", role: .cancel) { }
+        } message: {
+            Text("Enter your PIN to send this capture.")
+        }
     }
 
     // MARK: - overlay
