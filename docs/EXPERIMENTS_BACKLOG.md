@@ -163,3 +163,35 @@ it also deletes the thin structures we want (why the Stage-5 mesh crop is box+pa
 3. Re-A/B dense vs base on a flat-heavy AND a thin-heavy subject; record numbers here, not just eyeball.
    To disable dense meanwhile: pass `stage5 options.dense_gaussians=false`. `data_device` defaults to
    `cpu` (A4000-safe); set `cuda` on the A6000 for speed.
+
+## QUEUED — Reconstruction knob sweep on a real feet capture (owner-flagged 2026-07-04)
+
+First real-data reconstruction (`session_20260704_143210`, ARKit, dense): the mesh + cloud "aren't
+terrible" but (owner) the **mesh is bumpy** and **fine vein definition is lost to smoothed gaussians**.
+Owner hypothesis: bumpiness is from the high `dense_gaussians` setting; lower it for a good capture like
+this (vs the poor sunglasses capture where dense earned its place). **Largely correct — one important
+correction/addition:**
+
+- **The dominant effect is scene scale, not the density knob.** This reconstruction is **~2.4 m** (it
+  fused the feet + stand + floor + a background object — see the eval render). 406k gaussians spread
+  over 2.4 m means the feet get only a *fraction* of the budget → veins are under-resolved. So **lowering
+  total density would make vein detail worse, not better** — density and fine detail trade off *within a
+  region*. The real lever for BOTH bumpiness and vein detail is **subject isolation** (concentrate the
+  gaussian budget on the feet): fewer background/floater gaussians → less bumpiness, AND more gaussians
+  per cm² on the subject → finer veins. The mesh crop only trims the *mesh* to the gaussian box; the
+  *gaussians* are still scene-scale, so it doesn't help.
+- **Scale is flagged** (`anchors_disagree`, applied 1.0; near-field LiDAR) — so any "true anatomy vs
+  reconstruction" metric here carries a scale caveat until the capture distance / scale is nailed down.
+- **Three coupled knobs**, sweep one at a time so effects are separable:
+  1. **Density** — `dense_gaussians` on/off (config: `pipeline_a6000_lowdensity.yaml`). Smoother mesh vs
+     more detail.
+  2. **Subject isolation** — crop the reconstruction *input* to the subject (a depth/spatial cutoff like
+     the one now in the capture overlay, applied to the DA3 cloud / metric points before MILo). Expected
+     biggest win.
+  3. **Regularizers** — MILo normal-consistency / distortion weights (the "feature-preserving smoothing"
+     dial): smoothness vs detail without changing gaussian count.
+
+**Method (cheap):** Stage 2/3 outputs are reused; only Stage 5 re-runs (~2 h each on A6000). Preserve
+the current dense result (`mv output output_dense`), run each variant to its own `output_<label>/`, and
+the owner reviews as each completes to steer the next. Do ARKit-vs-ARKit and HQ-vs-HQ separately (never
+cross-compare — different pose sources). Run AFTER the in-flight HQ dense run finishes.

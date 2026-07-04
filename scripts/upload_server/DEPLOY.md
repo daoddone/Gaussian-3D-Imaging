@@ -10,16 +10,16 @@ Pick a token and a short PIN, and put them where only root/the service reads the
 ```bash
 sudo tee /etc/anatomycapture-upload.env >/dev/null <<'EOF'
 UPLOAD_TOKEN=<a long random secret>
-UPLOAD_PIN=4729
+UPLOAD_PIN=6250
 EOF
 sudo chmod 600 /etc/anatomycapture-upload.env
 ```
 
 - `UPLOAD_TOKEN` — baked into the app build (below); rarely changes.
-- `UPLOAD_PIN` — the 4-digit code the clinician types at transmit time. The server requires **both**
-  the token AND the PIN (`X-Upload-Pin` header), so the baked token alone can't upload — a small
-  extra gate. (It's not brute-force-proof on its own; keep the server behind the network you trust
-  and rotate the PIN as needed.)
+- `UPLOAD_PIN` — the 4-digit code the clinician types at transmit time (**6250**; the app shows the
+  hint "Paul's Locker Combination", never the value). The server requires **both** the token AND the
+  PIN (`X-Upload-Pin` header), so the baked token alone can't upload — a small extra gate. (It's not
+  brute-force-proof on its own; keep the server behind the network you trust and rotate as needed.)
 
 ## 2. Install the service
 

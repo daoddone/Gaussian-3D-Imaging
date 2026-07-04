@@ -54,7 +54,9 @@ struct CaptureView: View {
             Button("Send") { model.confirmTransmit(pin: model.pinEntry) }
             Button("Cancel", role: .cancel) { }
         } message: {
-            Text("Enter your PIN to send this capture.")
+            // Hint only — the PIN itself is never stored in the app; it's verified server-side
+            // (UPLOAD_PIN=6250). The hint jogs the clinician's memory without leaking the value.
+            Text("Hint: Paul's Locker Combination")
         }
     }
 
