@@ -38,6 +38,11 @@ struct AVCapturePreview: UIViewRepresentable {
     }
 
     /// Retains the rotation coordinator + KVO observation and routes taps to the source.
+    /// `@MainActor`: every touch point (SwiftUI make/updateUIView, UIGestureRecognizer callbacks,
+    /// KVO→main hops, DispatchQueue.main dispatches, PreviewView/CALayer/RotationCoordinator reads)
+    /// is main-thread only, so isolating the whole class to MainActor matches its actual runtime
+    /// behavior and lets Swift 6.2 reason about the capture in `applyRotationWhenReady`.
+    @MainActor
     final class Coordinator: NSObject {
         let source: AVFoundationCaptureSource
         var rotation: AVCaptureDevice.RotationCoordinator?
