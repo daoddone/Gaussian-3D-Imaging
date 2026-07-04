@@ -86,16 +86,19 @@ def prepare_milo_dataset(layout: SessionLayout, out_dir: Path):
 
 
 def _host_ready():
-    """Return (ready, detail). The built+ported MILo host must be importable and
-    the supervision port must be present. Neither exists until H1/H2 are done."""
-    try:
-        import milo  # noqa: F401  -- the compiled MILo package
-    except Exception as e:
-        return False, f"MILo not importable ({type(e).__name__}); toolchain compile (H1) not done"
-    # H2: the ported supervision module we will add to the MILo host
-    ported = _HERE / "supervision" / "ags_depth_normal_losses.py"
-    if not ported.exists():
+    """Return (ready, detail). MILo runs in its OWN `milo` conda env as a subprocess
+    (torch 2.3.1+cu118 + compiled CUDA submodules), driven by milo_supervised.py -- so we
+    check that env + the H2 port here, NOT `import milo` in this (stage5) env."""
+    milo_py = Path(os.path.expanduser("~/miniforge3/envs/milo/bin/python"))
+    if not milo_py.exists():
+        return False, "milo conda env not built (H1: run scripts/pose_ba/milo_build_env2.sh + milo_build_submodules.sh)"
+    tetra = list((Path.home() / "miniforge3/envs/milo/lib").glob("python*/site-packages/diff_gaussian_rasterization*"))
+    if not tetra:
+        return False, "MILo CUDA submodules not compiled (H1)"
+    if not (_HERE / "supervision" / "ags_depth_normal_losses.py").exists():
         return False, "ported depth/normal supervision (H2) not present"
+    if not (_HERE / "milo_supervised.py").exists():
+        return False, "milo_supervised driver (H2) not present"
     return True, "host ready"
 
 

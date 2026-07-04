@@ -1,0 +1,73 @@
+diff --git a/milo/scene/mesh.py b/milo/scene/mesh.py
+index 988cd8c..66ba2d4 100644
+--- a/milo/scene/mesh.py
++++ b/milo/scene/mesh.py
+@@ -169,7 +169,7 @@ class MeshRasterizer(torch.nn.Module):
+         self, 
+         cameras:Union[List[Camera], Camera]=None,
+         raster_settings:RasterizationSettings=None,
+-        use_opengl=True,
++        use_opengl=False,   # headless server: no EGL/GL -> use nvdiffrast CUDA context (clinical-pipeline patch)
+     ):
+         super().__init__()
+         
+diff --git a/milo/train.py b/milo/train.py
+index 392d733..746b443 100644
+--- a/milo/train.py
++++ b/milo/train.py
+@@ -181,7 +181,12 @@ def training(
+         reg_kick_on = iteration >= args.regularization_from_iter
+         mesh_kick_on = args.mesh_regularization and (iteration >= mesh_config["start_iter"])
+         depth_order_kick_on = args.depth_order
+-        
++        # clinical pipeline: LiDAR metric-depth supervision. We do NOT force the depth-capable
++        # renderer early (the _ms densification path needs 'area_max' etc. that render() omits);
++        # instead the depth loss piggybacks on the depth render already active from
++        # regularization_from_iter (3000) onward -- same phase as MILo's depth-normal reg.
++        lidar_kick_on = getattr(args, "lidar_depth_lambda", 0.0) > 0 and bool(getattr(args, "lidar_depth_dir", ""))
++
+         # If depth-normal regularization or mesh-in-the-loop regularization are active,
+         # we use the rasterizer compatible with depth and normal rendering.
+         if reg_kick_on or mesh_kick_on:
+@@ -222,7 +227,26 @@ def training(
+             Ll1 = l1_loss(image, gt_image)
+         ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
+         loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
+-        
++
++        # LiDAR metric-depth supervision (AGS-Mesh edge-aware log-L1) -- clinical pipeline H2 port.
++        # MILo trains in metric coords scaled by lidar_depth_scale (S), so LiDAR metres are
++        # multiplied by S to match the rendered z-depth. Loaded on the fly by image_name +
++        # cached on the camera (no dataset/camera-class edits). See milo_supervised.py.
++        if lidar_kick_on and "expected_depth" in render_pkg:
++            import ags_depth_normal_losses as _ags
++            if not getattr(viewpoint_cam, "_lidar_loaded", False):
++                _H, _W = image.shape[-2], image.shape[-1]
++                _ld, _lm = _ags.load_lidar_depth(args.lidar_depth_dir, viewpoint_cam.image_name,
++                                                 (_H, _W), image.device)
++                if _ld is not None:
++                    _ld = _ld * float(args.lidar_depth_scale)
++                viewpoint_cam.lidar_depth, viewpoint_cam.lidar_mask = _ld, _lm
++                viewpoint_cam._lidar_loaded = True
++            if viewpoint_cam.lidar_depth is not None and viewpoint_cam.lidar_mask.any():
++                _rd = render_pkg["expected_depth"][0]  # H,W scaled z-depth
++                loss = loss + args.lidar_depth_lambda * _ags.edge_aware_logl1(
++                    _rd, viewpoint_cam.lidar_depth, image, viewpoint_cam.lidar_mask)
++
+         # Depth-Normal Consistency Regularization
+         if reg_kick_on:
+             rendered_depth_to_normals: torch.Tensor = depth_to_normal(
+@@ -551,6 +575,13 @@ if __name__ == "__main__":
+     # > Used for pruning, densification and Gaussian pivots selection.
+     parser.add_argument("--imp_metric", required=True, type=str, choices=["outdoor", "indoor"])
+     parser.add_argument("--config_path", type=str, default="./configs/fast")
++    # --- clinical pipeline: LiDAR metric-depth supervision (H2 port) ---
++    parser.add_argument("--lidar_depth_dir", type=str, default="",
++                        help="capture/ dir holding depth/*.npy (+ confidence/*.npy) for AGS-Mesh depth loss")
++    parser.add_argument("--lidar_depth_lambda", type=float, default=0.0,
++                        help="weight for edge-aware log-L1 LiDAR depth supervision (0 = off = stock MILo)")
++    parser.add_argument("--lidar_depth_scale", type=float, default=1.0,
++                        help="scene scale-up factor S; LiDAR metres are multiplied by S to match the scaled render depth")
+     # Aggressive Cloning
+     parser.add_argument("--aggressive_clone_from_iter", type=int, default = 500)
+     parser.add_argument("--aggressive_clone_interval", type=int, default = 250)

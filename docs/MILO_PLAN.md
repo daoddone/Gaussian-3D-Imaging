@@ -58,6 +58,29 @@ Chosen over 2DGS/Surfels (post-hoc TSDF/Poisson, coarser), SuGaR (its predecesso
   normal frame (RaDe-GS renders world-frame normals; our Stage-4 normals are camera-frame ->
   rotate by R_c2w once).
 
+## Port findings (verified by reading the cloned repo, 2026-07-03)
+- **Normalization trap AVOIDED (verified).** MILo uses stock 3DGS `getNerfppNorm` (scene/
+  dataset_readers.py): `nerf_normalization = {translate:-center, radius:diag*1.1}` feeds only
+  the position LR scale (`create_from_pcd(pcd, cameras_extent)`) and densification thresholds —
+  it does NOT rescale points or cameras. **MILo trains in METRIC coordinates**, so LiDAR depth
+  (m) matches rendered depth directly; no unit-cube conversion needed. This de-risks the port's
+  #1 danger.
+- **Injection points (train.py):** loop renders with `require_depth=True` -> `render_pkg` has
+  rendered depth; `Ll1 = l1_loss(image, gt_image)`. Add
+  `loss += depth_lambda * edge_aware_logl1(render_pkg[depth], cam.lidar_depth, image, cam.mask)`.
+  MILo already has depth-order + depth-normal + mesh-in-loop regularizers to sit alongside.
+- **Data plumbing:** extend scene/cameras.py `Camera` to hold `lidar_depth`+`mask`; load in
+  scene/dataset_readers.py from our `capture/depth/{fid}.npy` + `capture/confidence/{fid}.npy`
+  (reuse gsplat_recon.load_dataset mask-normalized resize). Match by COLMAP image name.
+- **Run:** `train.py -s <colmap_dataset> -m <out> --imp_metric indoor --rasterizer radegs`
+  (indoor for close-up face/hand); then `mesh_extract_sdf.py`. TODO at port time: confirm radegs
+  rendered depth is metric z-depth (not disparity/NDC) before differencing against LiDAR.
+- **Env gotcha resolved:** MILo's `mkl=2023.1.0` pin is UNSATISFIABLE with torch 2.3.1
+  (mkl2023.1 needs llvm-openmp>=16; torch2.3.1 needs <16). Drop the mkl pin. Build the env with
+  scripts/pose_ba/milo_build_env2.sh + milo_build_submodules.sh. tetra_triangulation's
+  `find_library(cnpy)` is unused (target links only CUDA/Torch/CGAL) — cnpy NOT required; and its
+  Delaunay is sequential (no CGAL Concurrency_tag fix needed).
+
 ## Architecture
 Keep MILo as an ALTERNATIVE Stage-5 host (config stage5.host: milo), NOT a replacement. Add
 `milo_supervised.py` exposing reconstruct(dataset_dir, capture_dir, normals_dir, output_dir,
@@ -80,3 +103,42 @@ layout), mesh.ply (in metric world space — undo any normalization), renders/, 
 
 Sources: arXiv 2506.24096; anttwo.github.io/milo; github.com/Anttwo/MILo (issues #34,#38,#42,#43);
 GOF tetra_triangulation CGAL issue #16; ACM TOG 10.1145/3763339.
+
+---
+
+## BUILD LOG — EXECUTED 2026-07-03/04 (H1 + H2 DONE, host wired)
+
+MILo is BUILT and depth-supervision is PORTED + validated. Env `milo`; repo `third_party/MILo`.
+Reproduce with scripts/pose_ba/milo_build_env2.sh -> milo_build_submodules.sh -> milo_fix_tetra.sh.
+
+**Blockers hit + fixes (all real, all resolved):**
+1. `mkl=2023.1.0` pin UNSATISFIABLE (needs llvm-openmp>=16; torch2.3.1 needs <16). -> drop mkl pin.
+2. conda `pytorch-cuda=11.8` resolved to a CPU-only torch. -> `pip install --force-reinstall
+   torch==2.3.1+cu118 ... --index-url https://download.pytorch.org/whl/cu118` (GPU, avail True).
+3. tetra_triangulation cmake FAILED: cmake 4.x rejects pybind11 v2.9.2's old cmake_minimum_required.
+   -> `conda install cmake<4` (got 3.31.8). (cnpy find_library is unused; Delaunay is sequential
+   so no CGAL Concurrency_tag fix needed.)
+4. Runtime: nvdiffrast JIT-compiles its OpenGL plugin -> `fatal error: EGL/egl.h` (headless #34).
+   -> scene/mesh.py MeshRasterizer default `use_opengl=True` -> `False` (nvdiffrast CUDA context).
+5. Runtime: `cudaErrorInvalidConfiguration` in the _ms rasterizer backward at iter 0. ROOT CAUSE:
+   our METRIC scenes are ~0.1 units; the INRIA-lineage rasterizer overflows at that scale (gsplat
+   tolerated it). -> train at scene scaled to ~unit (S = 1/nerf_radius), re-metric outputs /S.
+   This is baked into milo_supervised.py (auto-scale) and threaded into the depth loss.
+
+**Depth port (H2) — 3 flag-guarded edits to milo/train.py + supervision/ags_depth_normal_losses.py:**
+- args `--lidar_depth_dir/--lidar_depth_lambda/--lidar_depth_scale`; loss block after the base
+  photometric loss uses `render_pkg["expected_depth"]` (metric z) + on-the-fly LiDAR load by
+  `image_name` (no camera/dataset-class edits). Piggybacks on the depth render active from
+  regularization_from_iter=3000 (forcing it earlier breaks the _ms densification, which needs
+  'area_max'). LiDAR metres *= lidar_depth_scale (S) to match the scaled render depth.
+- NaN-safety: iPhone LiDAR marks invalid px as NaN; `nan_to_num` in load_lidar_depth (BEFORE the
+  mask-normalized resize, else d*m = NaN*0 poisons the map) AND in edge_aware_logl1 (masked
+  selection over a tensor with NaN makes backward compute 0*NaN=NaN).
+- Validated: loss finite past iter 3000, LiDAR term contributes (~+0.07 to loss), 22 it/s.
+
+**Host wiring:** milo_supervised.reconstruct(dataset_dir, capture_dir, normals_dir, output_dir,
+options) runs MILo in its env via subprocess (auto-scale up, train+mesh_extract, scale outputs
+back to metric, write point_cloud.ply + mesh.ply + provenance). run.py _host_ready() now checks
+the milo env + compiled submodules + the two H2 files (NOT `import milo`, wrong env). Set
+config stage5.host: milo to select it. Mesh -> <out>/mesh_learnable_sdf.ply (learnable-SDF
+Marching-Tetrahedra); gaussians -> <out>/point_cloud/iteration_N/point_cloud.ply.
