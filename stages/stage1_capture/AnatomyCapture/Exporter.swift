@@ -12,9 +12,10 @@ enum Exporter {
         let sessionName = directory.deletingLastPathComponent().lastPathComponent
         NSFileCoordinator().coordinate(readingItemAt: directory, options: [.forUploading],
                                        error: &coordinatorError) { zippedURL in
+            // Unique destination per call: a finalize zip and a transmit re-zip can run close
+            // together, and a fixed path would let them race on removeItem/copyItem.
             let dest = FileManager.default.temporaryDirectory
-                .appendingPathComponent("\(sessionName)_capture.zip")
-            try? FileManager.default.removeItem(at: dest)
+                .appendingPathComponent("\(sessionName)_\(UUID().uuidString).zip")
             do {
                 try FileManager.default.copyItem(at: zippedURL, to: dest)
                 out = dest

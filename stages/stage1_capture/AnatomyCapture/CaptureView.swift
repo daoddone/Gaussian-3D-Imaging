@@ -51,6 +51,7 @@ struct ReticleOverlay: View {
 
 struct CaptureView: View {
     @State var model: CaptureModel
+    @State private var showSettings = false
 
     var body: some View {
         ZStack {
@@ -72,6 +73,7 @@ struct CaptureView: View {
         .sheet(isPresented: $model.showInspector) {
             CoverageInspectorSheet(meshNode: model.meshNode)
         }
+        .sheet(isPresented: $showSettings) { SettingsView() }
     }
 
     // MARK: - overlay
@@ -87,11 +89,19 @@ struct CaptureView: View {
 
     private var topBar: some View {
         HStack(alignment: .top) {
+            Button { showSettings = true } label: {
+                Image(systemName: "gearshape.fill").font(.title3).foregroundStyle(.white)
+                    .padding(8).background(.black.opacity(0.35), in: Circle())
+            }
+            .accessibilityLabel("Settings")
+            .padding(.trailing, 4)
             VStack(alignment: .leading, spacing: 4) {
                 Label(model.trackingMessage.isEmpty ? "starting…" : model.trackingMessage,
                       systemImage: "dot.radiowaves.left.and.right")
                     .font(.caption).foregroundStyle(.white)
-                if model.phase == .recording {
+                // valid-depth readout shown live in preview AND recording (framing aid). % = share
+                // of depth pixels the sensor trusts; see the guidance capsule below for how to raise it.
+                if model.validDepthFraction > 0 || model.phase == .recording {
                     Text("valid depth: \(Int(model.validDepthFraction * 100))%")
                         .font(.caption2).foregroundStyle(model.validDepthFraction > 0.4 ? .green : .yellow)
                 }
@@ -160,10 +170,9 @@ struct CaptureView: View {
         case .idle, .previewing:
             VStack(spacing: 10) {
                 setupControls
-                Text(model.backend == .hqDepth
-                     ? "Center the region, hold ~30 cm, orbit slowly (~20 s). Tap to focus."
-                     : "Center the region, hold ~30 cm, orbit slowly (finish in ~20 s).")
-                    .font(.caption).foregroundStyle(.white).padding(.horizontal, 12)
+                Text(guidanceText)
+                    .font(.caption).foregroundStyle(.white).multilineTextAlignment(.center)
+                    .padding(.horizontal, 12)
                     .padding(.vertical, 6).background(.black.opacity(0.35), in: Capsule())
                 recordButton
             }
@@ -191,6 +200,23 @@ struct CaptureView: View {
         }
     }
 
+    /// Framing guidance that doubles as the valid-depth explainer (owner question #4). "valid depth"
+    /// = share of depth pixels the sensor trusts. ARKit temporally FILLS + confidence-thresholds its
+    /// depth, so it reads high at ~1–2 ft; HQ is RAW LiDAR (holes = NaN), so it needs the subject
+    /// past the ~25 cm near-field to read high. When it's low, tell the clinician how to raise it.
+    private var guidanceText: String {
+        let low = model.validDepthFraction > 0 && model.validDepthFraction < 0.4
+        if model.backend == .hqDepth {
+            return low
+                ? "Low valid depth — back off to ~30 cm+. Raw LiDAR reads holes (NaN) closer than ~25 cm."
+                : "Center the region, hold ~30 cm, orbit slowly (~20 s). Tap to focus."
+        } else {
+            return low
+                ? "Low valid depth — hold ~1–2 ft and fill the frame; ARKit is most confident there."
+                : "Center the region, hold ~30 cm, orbit slowly (finish in ~20 s)."
+        }
+    }
+
     private var recordButton: some View {
         Button { model.startRecording() } label: {
             ZStack {
@@ -206,7 +232,9 @@ struct CaptureView: View {
         VStack(spacing: 10) {
             Label("\(model.frameCount) frames — \(model.backend.uiLabel)", systemImage: "checkmark.circle.fill")
                 .font(.headline).foregroundStyle(.green)
-            if model.backend == .arkit {
+            // Post-record LiDAR coverage cloud — available for BOTH backends now (ARKit: fused
+            // world cloud; HQ: single-view). Shown whenever a cloud was captured.
+            if model.meshNode != nil {
                 Button { model.showInspector = true } label: {
                     Label("Inspect 3D coverage", systemImage: "cube.transparent")
                         .font(.subheadline).padding(.horizontal, 16).padding(.vertical, 8)
@@ -215,6 +243,9 @@ struct CaptureView: View {
             }
             TextField("Description", text: $model.captureDescription)
                 .textFieldStyle(.roundedBorder).font(.caption).frame(maxWidth: 420)
+                // metadata.json was written at finalize; persist edits made here so the on-disk
+                // capture dir (what AirDrop→Files copies) always carries the current description.
+                .onChange(of: model.captureDescription) { _, _ in model.syncDescriptionToDisk() }
             if !model.uploadMessage.isEmpty {
                 Text(model.uploadMessage).font(.caption2).foregroundStyle(.yellow)
             }

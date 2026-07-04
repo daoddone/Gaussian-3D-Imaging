@@ -90,6 +90,57 @@ enum PixelBufferCopy {
         return (out, mask, w, h)
     }
 
+    /// Cheap valid-depth fraction for the LIVE PREVIEW readout — subsampled every `step` pixels,
+    /// no array allocation. ARKit variant: valid = finite depth > 0 AND confidence >= threshold
+    /// (same rule as `depthAndMask`, so the preview % matches what recording would keep).
+    static func arkitValidFraction(depth: CVPixelBuffer, confidence: CVPixelBuffer?,
+                                   threshold: UInt8, step: Int = 4) -> Double {
+        let w = CVPixelBufferGetWidth(depth), h = CVPixelBufferGetHeight(depth)
+        CVPixelBufferLockBaseAddress(depth, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depth, .readOnly) }
+        let dRow = CVPixelBufferGetBytesPerRow(depth)
+        guard let dBase = CVPixelBufferGetBaseAddress(depth) else { return 0 }
+        var conf: CVPixelBuffer? = confidence
+        if let c = confidence, CVPixelBufferGetWidth(c) != w || CVPixelBufferGetHeight(c) != h { conf = nil }
+        var cRow = 0
+        var cBase: UnsafeMutableRawPointer?
+        if let c = conf {
+            CVPixelBufferLockBaseAddress(c, .readOnly); cRow = CVPixelBufferGetBytesPerRow(c); cBase = CVPixelBufferGetBaseAddress(c)
+        }
+        defer { if let c = conf { CVPixelBufferUnlockBaseAddress(c, .readOnly) } }
+        var valid = 0, total = 0, y = 0
+        while y < h {
+            let drow = dBase.advanced(by: y * dRow).assumingMemoryBound(to: Float32.self)
+            let crow = cBase?.advanced(by: y * cRow).assumingMemoryBound(to: UInt8.self)
+            var x = 0
+            while x < w {
+                let d = drow[x]; let cc = crow?[x] ?? 2
+                if d.isFinite && d > 0 && cc >= threshold { valid += 1 }
+                total += 1; x += step
+            }
+            y += step
+        }
+        return total > 0 ? Double(valid) / Double(total) : 0
+    }
+
+    /// Cheap finite-depth fraction for the HQ live-preview readout (subsampled). `depth` must be
+    /// DepthFloat32 (convert via AVDepthData.converting(toDepthDataType:) first).
+    static func finiteFraction(depthFloat32 depth: CVPixelBuffer, step: Int = 4) -> Double {
+        let w = CVPixelBufferGetWidth(depth), h = CVPixelBufferGetHeight(depth)
+        CVPixelBufferLockBaseAddress(depth, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depth, .readOnly) }
+        let dRow = CVPixelBufferGetBytesPerRow(depth)
+        guard let dBase = CVPixelBufferGetBaseAddress(depth) else { return 0 }
+        var valid = 0, total = 0, y = 0
+        while y < h {
+            let drow = dBase.advanced(by: y * dRow).assumingMemoryBound(to: Float32.self)
+            var x = 0
+            while x < w { let d = drow[x]; if d.isFinite && d > 0 { valid += 1 }; total += 1; x += step }
+            y += step
+        }
+        return total > 0 ? Double(valid) / Double(total) : 0
+    }
+
     /// AVFoundation depth path: copy a DepthFloat32 map into `[Float]` (meters) and
     /// synthesize the validity mask from finiteness alone. Unlike ARKit, AVCaptureDepthDataOutput
     /// gives no per-pixel confidence map — with filtering disabled, invalid pixels arrive as NaN,

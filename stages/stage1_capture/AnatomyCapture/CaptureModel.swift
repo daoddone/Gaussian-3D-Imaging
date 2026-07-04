@@ -68,6 +68,12 @@ final class CaptureModel {
     private var recordStartedAt = Date()
     private var safetyStop: Task<Void, Never>?
 
+    // Finished-capture bookkeeping so a review-screen description edit persists (metadata.json
+    // is written at finalize; the review TextField edits captureDescription AFTER that).
+    private var lastCaptureDir: URL?
+    private var zipTask: Task<Void, Never>?   // the in-flight zip (finalize or transmit); serialized
+    private var isPreparingUpload = false     // synchronous re-entrancy guard for transmit()
+
     let budgetSeconds: TimeInterval = 20
 
     /// Path B source (lazily created; owns its own AVCaptureSession).
@@ -112,7 +118,7 @@ final class CaptureModel {
         if case .idle = phase { phase = .previewing }
     }
 
-    private func runConfiguration() {
+    private func makeConfiguration() -> ARWorldTrackingConfiguration {
         let cfg = ARWorldTrackingConfiguration()
         cfg.worldAlignment = .gravity
         cfg.isAutoFocusEnabled = true            // explicit: ARKit autofocuses; per-frame K tracks it
@@ -130,7 +136,19 @@ final class CaptureModel {
         if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
             cfg.sceneReconstruction = .mesh
         }
-        session?.run(cfg, options: [.resetTracking, .removeExistingAnchors])
+        return cfg
+    }
+
+    private func runConfiguration() {
+        session?.run(makeConfiguration(), options: [.resetTracking, .removeExistingAnchors])
+    }
+
+    /// Clear the accumulated scene-reconstruction mesh WITHOUT resetting world tracking, so the
+    /// post-record coverage snapshot reflects only geometry scanned DURING the recording — not
+    /// whatever the camera happened to see while the clinician was framing beforehand (owner
+    /// report #3). `.resetSceneReconstruction` drops the mesh but keeps the pose/world origin.
+    private func resetSceneMesh() {
+        session?.run(makeConfiguration(), options: [.resetSceneReconstruction])
     }
 
     /// The live LiDAR scene-reconstruction mesh anchors (ARKit only), for the live overlay +
@@ -168,8 +186,11 @@ final class CaptureModel {
             recordStartedAt = Date()
             phase = .recording
             switch backend {
-            case .arkit:   delegateQueue.async { [coordinator] in coordinator.startWriting(writer: w) }
-            case .hqDepth: avSource.startWriting(writer: w)
+            case .arkit:
+                resetSceneMesh()             // start the coverage mesh fresh at record (drop pre-record geometry)
+                delegateQueue.async { [coordinator] in coordinator.startWriting(writer: w) }
+            case .hqDepth:
+                avSource.startWriting(writer: w)
             }
             safetyStop = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: UInt64((self?.budgetSeconds ?? 20) + 1) * 1_000_000_000)
@@ -191,22 +212,32 @@ final class CaptureModel {
 
         // Stop appends (serialized after any in-flight frame), then finalize (runs after appends).
         var trackingNormal: Bool? = nil
+        var cloudPts: [SIMD3<Float>] = []
         switch backend {
         case .arkit:
-            trackingNormal = await withCheckedContinuation { cont in
-                delegateQueue.async { [coordinator] in cont.resume(returning: coordinator.stopWriting()) }
+            let out: (Bool, [SIMD3<Float>]) = await withCheckedContinuation { cont in
+                delegateQueue.async { [coordinator] in
+                    cont.resume(returning: (coordinator.stopWriting(), coordinator.cloudPoints()))
+                }
             }
+            trackingNormal = out.0
+            cloudPts = out.1
         case .hqDepth:
             avSource.stopWriting()
+            cloudPts = avSource.cloudPoints()
         }
 
-        // Snapshot the live LiDAR coverage mesh for the post-record inspector (ARKit only).
-        // PAUSE the AR session FIRST: scene reconstruction keeps rewriting each ARMeshAnchor's
-        // Metal vertex/face buffers on ARKit's queue, and reading them here (MainActor) while they
-        // mutate is a data race / EXC_BAD_ACCESS. reset() re-runs the config to resume for a new capture.
-        if backend == .arkit {
-            session?.pause()
-            meshNode = MeshSnapshot.node(from: currentMeshAnchors())
+        // Post-record coverage: a LiDAR point cloud — denser and truer to a close-range subject than
+        // ARKit's fused room-scale mesh, and available for HQ too (owner reports #1/#3). ARKit points
+        // are world-space (fused across the orbit); HQ is a single-view cloud (no pose). PAUSE the AR
+        // session first: the mesh-anchor fallback reads ARMeshAnchor Metal buffers that ARKit keeps
+        // rewriting on its own queue (reading them mid-mutate is a data race). Feedback only —
+        // never part of the saved capture.
+        if backend == .arkit { session?.pause() }
+        if let node = PointCloudNode.make(points: cloudPts) {
+            meshNode = node
+        } else if backend == .arkit {
+            meshNode = MeshSnapshot.node(from: currentMeshAnchors())   // fallback if the cloud is too sparse
         } else {
             meshNode = nil
         }
@@ -243,23 +274,58 @@ final class CaptureModel {
             }
             exportURL = nil
             uploadMessage = ""
+            lastCaptureDir = result.captureDir
             phase = .finished(result.captureDir)
             let dir = result.captureDir
-            Task {
-                let zip = await Task.detached { Exporter.zip(directory: dir) }.value
-                self.exportURL = zip
+            zipTask = Task {                              // pre-build a zip so ShareLink is ready
+                self.exportURL = await Task.detached { Exporter.zip(directory: dir) }.value
             }
+        }
+    }
+
+    /// Persist the (possibly review-edited) description into the finished capture's metadata.json.
+    /// metadata.json is written at finalize, but the review screen lets the clinician edit the
+    /// description afterward — call this on each edit so the on-disk dir (what the AirDrop→Files
+    /// transfer copies) always carries the current text. Cheap; a small atomic JSON rewrite.
+    func syncDescriptionToDisk() {
+        guard let dir = lastCaptureDir else { return }
+        let metaURL = dir.appendingPathComponent("metadata.json")
+        guard let data = try? Data(contentsOf: metaURL),
+              var obj = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] else { return }
+        obj["description"] = captureDescription
+        if let out = try? JSONSerialization.data(withJSONObject: obj, options: [.prettyPrinted, .sortedKeys]) {
+            try? out.write(to: metaURL, options: .atomic)
         }
     }
 
     // MARK: - transmit (review screen; nothing is auto-sent)
 
-    /// Upload the finished session's zip to the Linux receiver. No-op until the zip is ready.
+    /// Upload the finished session's zip to the Linux receiver. Persists the latest description,
+    /// rebuilds the zip fresh from the current dir (so it always carries the current text — no
+    /// stale-zip guessing), then uploads. Serialized + re-entrancy-guarded so overlapping taps
+    /// (or an in-flight finalize zip) can't spawn racing zip tasks.
     func transmit() {
-        guard let zip = exportURL else { uploadMessage = "still zipping…"; return }
         guard UploadConfig.isConfigured else {
-            uploadMessage = "set server URL + token in Settings first"; return
+            uploadMessage = "set server URL + token in Settings (gear, top-left) first"; return
         }
+        guard let dir = lastCaptureDir else { uploadMessage = "nothing to send"; return }
+        guard !isPreparingUpload else { return }          // synchronous guard: one prepare at a time
+        isPreparingUpload = true
+        syncDescriptionToDisk()                            // metadata.json reflects the latest edit
+        uploadMessage = "preparing…"
+        let pending = zipTask                              // let any in-flight finalize zip finish first
+        zipTask = Task {
+            _ = await pending?.value
+            defer { self.isPreparingUpload = false }
+            guard let zip = await Task.detached({ Exporter.zip(directory: dir) }).value else {
+                self.uploadMessage = "zip failed"; return
+            }
+            self.exportURL = zip
+            self.startUpload(zip)
+        }
+    }
+
+    private func startUpload(_ zip: URL) {
         switch Uploader.shared.upload(zipURL: zip, sessionID: sessionID) {
         case .success:  uploadMessage = "uploading in background…"
         case .failure(let e): uploadMessage = "upload failed: \(e.localizedDescription)"
@@ -275,6 +341,13 @@ final class CaptureModel {
     }
 
     func note(tracking: String) { trackingMessage = tracking }
+
+    /// Live preview valid-depth (framing aid, both backends). Only updates outside recording —
+    /// the recording path uses note(frameCount:elapsed:validFraction:).
+    func notePreview(validFraction: Double) {
+        guard phase == .previewing || phase == .idle else { return }
+        validDepthFraction = validFraction
+    }
 
     func fail(_ message: String) {
         if case .finished = phase { return }

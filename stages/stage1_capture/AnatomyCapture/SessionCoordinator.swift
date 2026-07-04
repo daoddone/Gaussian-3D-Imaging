@@ -31,6 +31,8 @@ nonisolated final class SessionCoordinator: NSObject, ARSessionDelegate, @unchec
     private var index = 0
     private var firstKeptTime: TimeInterval?
     private var trackingNormalThroughout = true
+    private var lastPreviewReport: TimeInterval = 0     // throttle for the live preview valid-depth readout
+    let cloud = PointCloudAccumulator()                 // world coverage cloud for the post-record inspector
 
     init(ciContext: CIContext, colorSpace: CGColorSpace, confidenceThreshold: UInt8, depthMode: String) {
         self.ciContext = ciContext
@@ -47,7 +49,11 @@ nonisolated final class SessionCoordinator: NSObject, ARSessionDelegate, @unchec
         index = 0
         firstKeptTime = nil
         trackingNormalThroughout = true
+        cloud.reset()
     }
+
+    /// The accumulated world coverage cloud (delegate-queue confined; read at stop on that queue).
+    func cloudPoints() -> [SIMD3<Float>] { cloud.points }
 
     /// Stop recording; no further frames are appended. Returns whether tracking
     /// stayed normal for the whole recording. MUST be dispatched onto the
@@ -62,7 +68,10 @@ nonisolated final class SessionCoordinator: NSObject, ARSessionDelegate, @unchec
     // MARK: - ARSessionDelegate
 
     func session(_ session: ARSession, didUpdate frame: ARFrame) {
-        guard recording, let writer else { return }
+        guard recording, let writer else {
+            if !recording { reportPreviewValid(frame) }   // live framing aid before Record
+            return
+        }
 
         guard case .normal = frame.camera.trackingState else {
             trackingNormalThroughout = false
@@ -113,10 +122,25 @@ nonisolated final class SessionCoordinator: NSObject, ARSessionDelegate, @unchec
             depth: depth, mask: mask, depthW: dw, depthH: dh,
             R: R, t: t, K: Kd, time: relTime, validDepthFraction: validFrac))
 
+        cloud.add(depth: depth, mask: mask, dw: dw, dh: dh, K: Kd,
+                  colorW: colorW, colorH: colorH, R: R, t: t)
+
         let kept = selector.kept
         Task { @MainActor [weak model] in
             model?.note(frameCount: kept, elapsed: relTime, validFraction: validFrac)
         }
+    }
+
+    /// Throttled (~2.5 Hz) live valid-depth readout while previewing, so the clinician can frame to
+    /// maximize usable depth BEFORE recording. Same valid rule as recording (confidence >= threshold).
+    private func reportPreviewValid(_ frame: ARFrame) {
+        let t = frame.timestamp
+        guard t - lastPreviewReport > 0.4 else { return }
+        lastPreviewReport = t
+        guard let dd = frame.smoothedSceneDepth ?? frame.sceneDepth else { return }
+        let frac = PixelBufferCopy.arkitValidFraction(
+            depth: dd.depthMap, confidence: dd.confidenceMap, threshold: confidenceThreshold)
+        Task { @MainActor [weak model] in model?.notePreview(validFraction: frac) }
     }
 
     func session(_ session: ARSession, didFailWithError error: Error) {

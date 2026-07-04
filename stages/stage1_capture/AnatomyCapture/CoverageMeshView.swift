@@ -46,8 +46,8 @@ struct CoverageInspectorSheet: View {
             } else {
                 VStack(spacing: 10) {
                     Image(systemName: "cube.transparent").font(.largeTitle).foregroundStyle(.gray)
-                    Text("No coverage mesh").font(.headline).foregroundStyle(.white)
-                    Text("The 3D inspector uses ARKit's live LiDAR mesh — available in ARKit mode only, and only if the scan ran long enough to build one.")
+                    Text("No coverage cloud").font(.headline).foregroundStyle(.white)
+                    Text("The 3D inspector shows the LiDAR coverage point cloud from the recording. If it's empty the scan had too little valid depth (too close/far, or too short) — re-record with the valid-depth readout higher.")
                         .font(.caption).foregroundStyle(.white.opacity(0.7))
                         .multilineTextAlignment(.center).padding(.horizontal, 24)
                 }

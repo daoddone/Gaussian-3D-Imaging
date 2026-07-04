@@ -54,7 +54,9 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
     private var selector = KeyframeSelector()
     private var index = 0
     private var firstKeptTime: TimeInterval?
+    private var lastPreviewReport: TimeInterval = 0     // throttle for the live preview valid-depth readout
     private let identityR = matrix_identity_float3x3   // no live pose -> selector uses time-stride only
+    private let cloud = PointCloudAccumulator()         // single-view coverage cloud (no pose) for the inspector
 
     init(ciContext: CIContext, colorSpace: CGColorSpace) {
         self.ciContext = ciContext
@@ -164,6 +166,8 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
             }
             guard ok else { reportFail(lastConfigError); return }
             if !session.isRunning { session.startRunning() }            // synchronous; hence off the main queue
+            // Replace the stuck "starting…" readout (ARKit posts tracking states; HQ has none).
+            Task { @MainActor [weak model] in model?.note(tracking: "HQ-Depth ready — tap to focus") }
         }
     }
 
@@ -235,8 +239,12 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
             selector.reset()
             index = 0
             firstKeptTime = nil
+            cloud.reset()
         }
     }
+
+    /// The single-view coverage cloud (most recent kept frame; HQ has no pose). dataQueue-confined.
+    func cloudPoints() -> [SIMD3<Float>] { dataQueue.sync { cloud.points } }
 
     func stopWriting() {
         dataQueue.sync { recording = false; writer = nil }
@@ -246,10 +254,13 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
 
     func dataOutputSynchronizer(_ synchronizer: AVCaptureDataOutputSynchronizer,
                                 didOutput collection: AVCaptureSynchronizedDataCollection) {
-        guard recording, let writer else { return }
         guard let syncedDepth = collection.synchronizedData(for: depthOut) as? AVCaptureSynchronizedDepthData,
               let syncedVideo = collection.synchronizedData(for: videoOut) as? AVCaptureSynchronizedSampleBufferData,
               !syncedDepth.depthDataWasDropped, !syncedVideo.sampleBufferWasDropped else { return }
+        guard recording, let writer else {
+            reportPreviewValid(syncedDepth.depthData, time: syncedVideo.timestamp.seconds)   // live framing aid
+            return
+        }
 
         let time = syncedVideo.timestamp.seconds
         if selector.isFinished(now: time) {
@@ -299,10 +310,30 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
             R: nil, t: nil,                            // AVFoundation: no pose
             K: K, time: relTime, validDepthFraction: validFrac))
 
+        // HQ has no pose -> keep a single-view cloud of the most recent kept frame for the inspector.
+        cloud.reset()
+        cloud.add(depth: depth, mask: mask, dw: dw, dh: dh, K: K,
+                  colorW: colorW, colorH: colorH,
+                  R: PointCloudAccumulator.identityR, t: PointCloudAccumulator.zeroT)
+
         let kept = selector.kept
         Task { @MainActor [weak model] in
             model?.note(frameCount: kept, elapsed: relTime, validFraction: validFrac)
         }
+    }
+
+    /// Throttled (~2.5 Hz) live valid-depth readout while previewing (dataQueue). Converts to
+    /// Float32 like the recording path and reports the finite fraction, so the clinician can frame
+    /// to raise valid-depth before recording (HQ raw LiDAR holes are NaN → low % when too close).
+    private func reportPreviewValid(_ depthData: AVDepthData, time: TimeInterval) {
+        guard time - lastPreviewReport > 0.4 else { return }
+        lastPreviewReport = time
+        var dd = depthData
+        if dd.depthDataType != kCVPixelFormatType_DepthFloat32 {
+            dd = dd.converting(toDepthDataType: kCVPixelFormatType_DepthFloat32)
+        }
+        let frac = PixelBufferCopy.finiteFraction(depthFloat32: dd.depthDataMap)
+        Task { @MainActor [weak model] in model?.notePreview(validFraction: frac) }
     }
 
     private func reportFail(_ msg: String) {
