@@ -317,7 +317,11 @@ final class CaptureModel {
         zipTask = Task {
             _ = await pending?.value
             defer { self.isPreparingUpload = false }
-            guard let zip = await Task.detached({ Exporter.zip(directory: dir) }).value else {
+            // Trailing-closure form: a non-trailing Task.detached({...}) binds the closure to Swift
+            // 6.2's new first `name:` parameter. Compute first, then guard (avoids a trailing closure
+            // inside the guard condition, which parses ambiguously against the else block).
+            let zipURL = await Task.detached { Exporter.zip(directory: dir) }.value
+            guard let zip = zipURL else {
                 self.uploadMessage = "zip failed"; return
             }
             self.exportURL = zip
@@ -377,7 +381,7 @@ final class CaptureModel {
     /// sensor-native regardless of it (IOS_NOTES §6), so this is descriptive metadata only.
     private func currentInterfaceOrientation() -> CaptureOrientation {
         let scene = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
-        return (scene?.interfaceOrientation.isPortrait ?? false) ? .portrait : .landscape
+        return (scene?.effectiveGeometry.interfaceOrientation.isPortrait ?? false) ? .portrait : .landscape
     }
 
     // MARK: - paths
