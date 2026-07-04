@@ -4,6 +4,7 @@ import CoreImage
 import CoreGraphics
 import Metal
 import SceneKit
+import UIKit
 import Observation
 
 /// Owns the capture lifecycle and the UI state. `@MainActor` + `@Observable`.
@@ -59,6 +60,7 @@ final class CaptureModel {
     let budgetSeconds: TimeInterval = 20
 
     /// Path B source (lazily created; owns its own AVCaptureSession).
+    @ObservationIgnored
     lazy var avSource: AVFoundationCaptureSource = {
         let s = AVFoundationCaptureSource(ciContext: ciContext, colorSpace: colorSpace)
         s.model = self
@@ -196,7 +198,10 @@ final class CaptureModel {
             providesPose: backend.providesPose,
             depthSource: backend == .arkit
                 ? "ARKit \(coordinator.depthMode) (LiDAR, temporally processed)"
-                : "AVFoundation builtInLiDARDepthCamera (raw, absolute, unfiltered)")
+                : "AVFoundation builtInLiDARDepthCamera (raw, absolute, unfiltered)",
+            deviceModel: UIDevice.current.model,
+            systemVersion: UIDevice.current.systemVersion,
+            appVersion: (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "?")
         let confidenceNote = backend == .arkit
             ? "depth valid (255) where ARConfidenceLevel >= medium; else NaN / 0."
             : "no per-pixel confidence; depth valid where finite (>0); holes = NaN / 0."

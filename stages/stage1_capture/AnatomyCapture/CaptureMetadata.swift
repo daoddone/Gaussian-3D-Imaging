@@ -1,5 +1,4 @@
 import Foundation
-import UIKit
 
 /// Which capture framework produced a session.
 enum CaptureBackend: String, CaseIterable, Sendable {
@@ -36,13 +35,10 @@ struct CaptureMetadata: Sendable {
     var frameCount: Int
     var providesPose: Bool
     var depthSource: String                 // human-readable depth provenance
-    var deviceModel: String = UIDevice.current.model
-    var systemVersion: String = UIDevice.current.systemVersion
-    var appVersion: String = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "?"
-
-    private static let iso: ISO8601DateFormatter = {
-        let f = ISO8601DateFormatter(); f.formatOptions = [.withInternetDateTime]; return f
-    }()
+    // Set by the caller on @MainActor (UIDevice.current / Bundle.main are MainActor-isolated).
+    var deviceModel: String
+    var systemVersion: String
+    var appVersion: String
 
     /// Plain dictionary for JSONSerialization (matches the other capture JSON files).
     func dictionary() -> [String: Any] {
@@ -51,8 +47,8 @@ struct CaptureMetadata: Sendable {
             "description": description,
             "framework": backend.rawValue,           // "arkit" | "hqDepth"
             "orientation": orientation.rawValue,      // "portrait" | "landscape"
-            "captured_at": Self.iso.string(from: capturedAt),
-            "finalized_at": Self.iso.string(from: finalizedAt),
+            "captured_at": capturedAt.ISO8601Format(),
+            "finalized_at": finalizedAt.ISO8601Format(),
             "frame_count": frameCount,
             "provides_pose": providesPose,            // false for hqDepth → pipeline runs unseeded SfM
             "depth_source": depthSource,
