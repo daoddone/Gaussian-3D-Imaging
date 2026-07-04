@@ -6,18 +6,24 @@ import RealityKit
 /// session when SwiftUI swaps to the AVFoundation preview, so only one backend owns the camera.
 struct ARViewContainer: UIViewRepresentable {
     let model: CaptureModel
+    let showOverlay: Bool          // draw the LiDAR coverage mesh, or plain camera video
 
     func makeUIView(context: Context) -> ARView {
         let view = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
         view.environment.background = .cameraFeed()
-        // Live coverage overlay: draw the LiDAR scene-reconstruction mesh as it fills in, so
-        // holes/thin regions are visible during recording (feedback only). ARKit builds it on-device.
-        view.debugOptions.insert(.showSceneUnderstanding)
+        applyOverlay(view)
         model.bind(session: view.session)
         return view
     }
 
-    func updateUIView(_ uiView: ARView, context: Context) {}
+    // Re-invoked whenever showOverlay changes (SwiftUI observes model.showOverlay via the parent).
+    func updateUIView(_ uiView: ARView, context: Context) { applyOverlay(uiView) }
+
+    /// Overlay is display-only: toggling debugOptions never touches the saved capture buffers.
+    private func applyOverlay(_ v: ARView) {
+        if showOverlay { v.debugOptions.insert(.showSceneUnderstanding) }
+        else { v.debugOptions.remove(.showSceneUnderstanding) }
+    }
 
     static func dismantleUIView(_ uiView: ARView, coordinator: ()) {
         uiView.session.pause()
@@ -51,7 +57,7 @@ struct CaptureView: View {
             if CaptureModel.isSupported() {
                 // Preview branches on the selected backend; swapping tears down the other session.
                 if model.backend == .arkit {
-                    ARViewContainer(model: model).ignoresSafeArea()
+                    ARViewContainer(model: model, showOverlay: model.showOverlay).ignoresSafeArea()
                 } else {
                     AVCapturePreview(source: model.avSource).ignoresSafeArea()
                 }
@@ -91,6 +97,18 @@ struct CaptureView: View {
                 }
             }
             Spacer()
+            // Overlay/video toggle (ARKit only): mesh coverage overlay vs plain camera video.
+            // Display-only; safe to toggle any time, including mid-recording.
+            if model.backend == .arkit {
+                Button { model.showOverlay.toggle() } label: {
+                    Image(systemName: model.showOverlay ? "cube.transparent.fill" : "cube.transparent")
+                        .font(.title3)
+                        .foregroundStyle(model.showOverlay ? .green : .white)
+                        .padding(8).background(.black.opacity(0.35), in: Circle())
+                }
+                .accessibilityLabel(model.showOverlay ? "Hide coverage mesh" : "Show coverage mesh")
+                .padding(.trailing, 6)
+            }
             if model.phase == .recording {
                 VStack(alignment: .trailing, spacing: 4) {
                     Text("\(model.frameCount) frames").font(.headline).foregroundStyle(.white)

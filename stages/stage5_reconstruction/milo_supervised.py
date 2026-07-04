@@ -74,13 +74,35 @@ def _scale_down_gaussians(in_ply, out_ply, S):
             data[:, idx[c]] -= np.log(S)
     Path(out_ply).parent.mkdir(parents=True, exist_ok=True)
     _write_inria_ply(out_ply, names, data)
-    return len(data)
+    xyz = data[:, [idx["x"], idx["y"], idx["z"]]].copy()
+    return len(data), xyz
 
 
-def _scale_down_mesh(in_mesh, out_mesh, S):
+def _object_box(xyz, pct=1.0, pad_frac=0.10):
+    """Object bounding box from the Gaussian centers: robust [pct, 100-pct] percentile + a
+    pad fraction. MILo meshes the whole scene the cameras saw and (via the 9-pivots-per-Gaussian
+    Delaunay) reaches slightly past the centers, so its mesh box is 2-3x the object; but the
+    OBJECT lives entirely inside the Gaussian cloud, so cropping the mesh to this padded box
+    trims background/floater surface WITHOUT touching object fidelity. The pad protects the
+    object's true edge (the raw center box would shave a few mm). No largest-component step."""
+    lo = np.percentile(xyz, pct, axis=0)
+    hi = np.percentile(xyz, 100 - pct, axis=0)
+    pad = pad_frac * (hi - lo)
+    return lo - pad, hi + pad
+
+
+def _scale_down_mesh(in_mesh, out_mesh, S, crop_box=None):
     import trimesh
     m = trimesh.load(str(in_mesh), process=False)
     m.vertices = np.asarray(m.vertices, np.float64) / S
+    if crop_box is not None:
+        lo, hi = crop_box
+        v = np.asarray(m.vertices)
+        inside = np.all((v >= lo) & (v <= hi), axis=1)
+        # keep only faces whose ALL 3 vertices sit inside the object box (drops the
+        # background/floater surface + any tets bridging out to it)
+        m.update_faces(inside[m.faces].all(axis=1))
+        m.remove_unreferenced_vertices()
     Path(out_mesh).parent.mkdir(parents=True, exist_ok=True)
     m.export(str(out_mesh))
     return len(m.vertices), len(m.faces)
@@ -173,14 +195,18 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
     # 3) scale outputs back to METRIC + write the Stage-6 contract
     it_dirs = sorted((raw_out / "point_cloud").glob("iteration_*"), key=lambda p: int(p.name.split("_")[1]))
     gz_in = it_dirs[-1] / "point_cloud.ply"
-    n_g = _scale_down_gaussians(gz_in, output_dir / "point_cloud.ply", S)
-    nv, nf = _scale_down_mesh(raw_out / "mesh_learnable_sdf.ply", output_dir / "mesh.ply", S)
+    n_g, gxyz = _scale_down_gaussians(gz_in, output_dir / "point_cloud.ply", S)
+    # crop the mesh to the object (Gaussian-cloud) box + pad so it comes out object-tight,
+    # not enclosing the whole scene. Disable with options milo_crop_pad < 0.
+    pad = float(opt.get("milo_crop_pad", 0.10))
+    crop = _object_box(gxyz, pad_frac=pad) if pad >= 0 else None
+    nv, nf = _scale_down_mesh(raw_out / "mesh_learnable_sdf.ply", output_dir / "mesh.ply", S, crop_box=crop)
 
     prov = {"stage5_host": "MILo (in-loop mesh, depth-supervised)",
             "gaussians": n_g, "views": n_imgs, "depth_lambda": depth_lambda,
             "milo_scale": S, "nerf_radius": radius, "imp_metric": imp_metric,
-            "mesh_vertices": nv, "mesh_triangles": nf,
-            "rasterizer": "radegs", "note": "trained scaled x1/radius; outputs re-metriced /S"}
+            "mesh_vertices": nv, "mesh_triangles": nf, "mesh_cropped_to_object_pad": pad if crop else None,
+            "rasterizer": "radegs", "note": "trained scaled x1/radius; outputs re-metriced /S; mesh cropped to Gaussian box+pad"}
     (output_dir / "provenance_stage5.json").write_text(json.dumps(prov, indent=2))
     print(f"[milo] DONE: {output_dir}/point_cloud.ply ({n_g} gaussians), mesh.ply ({nv} verts / {nf} tris)")
     return prov

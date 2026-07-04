@@ -42,6 +42,10 @@ final class CaptureModel {
     var captureDescription: String = ""
     var uploadMessage: String = ""
 
+    // Live coverage-mesh overlay on/off (ARKit only). Display-only — toggling it never affects
+    // the saved capture; off = plain camera video, on = LiDAR scene-reconstruction mesh drawn over it.
+    var showOverlay: Bool = true
+
     // Post-record 3D coverage inspector (ARKit only; nil for HQ-Depth). Feedback, not saved.
     var meshNode: SCNNode?
     var showInspector = false
