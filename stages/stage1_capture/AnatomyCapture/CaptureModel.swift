@@ -3,6 +3,7 @@ import ARKit
 import CoreImage
 import CoreGraphics
 import Metal
+import SceneKit
 import Observation
 
 /// Owns the capture lifecycle and the UI state. `@MainActor` + `@Observable`.
@@ -39,6 +40,10 @@ final class CaptureModel {
     var orientation: CaptureOrientation = .portrait
     var captureDescription: String = ""
     var uploadMessage: String = ""
+
+    // Post-record 3D coverage inspector (ARKit only; nil for HQ-Depth). Feedback, not saved.
+    var meshNode: SCNNode?
+    var showInspector = false
 
     let coordinator: SessionCoordinator
     private let ciContext: CIContext
@@ -104,7 +109,20 @@ final class CaptureModel {
             cfg.frameSemantics = [.sceneDepth]
             coordinator.depthMode = "sceneDepth"
         }
+        // Live coverage overlay: ARKit fuses LiDAR into a world mesh on-device (free). The
+        // ARView renders it (showSceneUnderstanding) so the clinician sees covered vs missing
+        // regions live and can dwell on thin areas (wound bed / medial arm). Feedback only —
+        // NOT written to the capture. Also snapshotted post-record for the 3D inspector.
+        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+            cfg.sceneReconstruction = .mesh
+        }
         session?.run(cfg, options: [.resetTracking, .removeExistingAnchors])
+    }
+
+    /// The live LiDAR scene-reconstruction mesh anchors (ARKit only), for the live overlay +
+    /// the post-record inspector. Empty for the HQ-Depth backend (AVFoundation has no meshing).
+    func currentMeshAnchors() -> [ARMeshAnchor] {
+        (session?.currentFrame?.anchors ?? []).compactMap { $0 as? ARMeshAnchor }
     }
 
     /// Switch capture framework (allowed only in idle/previewing). Tears down the outgoing
@@ -163,6 +181,9 @@ final class CaptureModel {
         case .hqDepth:
             avSource.stopWriting()
         }
+
+        // Snapshot the live LiDAR coverage mesh for the post-record inspector (ARKit only).
+        meshNode = backend == .arkit ? MeshSnapshot.node(from: currentMeshAnchors()) : nil
 
         let meta = CaptureMetadata(
             sessionID: sessionID,

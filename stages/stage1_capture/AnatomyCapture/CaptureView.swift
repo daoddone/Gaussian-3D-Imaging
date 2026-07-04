@@ -10,6 +10,9 @@ struct ARViewContainer: UIViewRepresentable {
     func makeUIView(context: Context) -> ARView {
         let view = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
         view.environment.background = .cameraFeed()
+        // Live coverage overlay: draw the LiDAR scene-reconstruction mesh as it fills in, so
+        // holes/thin regions are visible during recording (feedback only). ARKit builds it on-device.
+        view.debugOptions.insert(.showSceneUnderstanding)
         model.bind(session: view.session)
         return view
     }
@@ -60,6 +63,9 @@ struct CaptureView: View {
         }
         .preferredColorScheme(.dark)
         .statusBarHidden(true)
+        .sheet(isPresented: $model.showInspector) {
+            CoverageInspectorSheet(meshNode: model.meshNode)
+        }
     }
 
     // MARK: - overlay
@@ -168,6 +174,13 @@ struct CaptureView: View {
         VStack(spacing: 10) {
             Label("\(model.frameCount) frames — \(model.backend.uiLabel)", systemImage: "checkmark.circle.fill")
                 .font(.headline).foregroundStyle(.green)
+            if model.backend == .arkit {
+                Button { model.showInspector = true } label: {
+                    Label("Inspect 3D coverage", systemImage: "cube.transparent")
+                        .font(.subheadline).padding(.horizontal, 16).padding(.vertical, 8)
+                        .background(.white.opacity(0.2), in: Capsule()).foregroundStyle(.white)
+                }
+            }
             TextField("Description", text: $model.captureDescription)
                 .textFieldStyle(.roundedBorder).font(.caption).frame(maxWidth: 420)
             if !model.uploadMessage.isEmpty {
