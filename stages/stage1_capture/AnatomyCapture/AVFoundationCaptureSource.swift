@@ -59,29 +59,39 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
 
     /// Configure inputs/outputs + pick the highest-res depth format. Returns false (via model.fail)
     /// if the LiDAR device / a depth-capable format is unavailable.
+    private var lastConfigError = ""       // set by configureIfNeeded; reported by startPreview only after retries
+
     private func configureIfNeeded() -> Bool {
         if configured { return true }
         guard let device = AVCaptureDevice.default(.builtInLiDARDepthCamera, for: .video, position: .back) else {
-            reportFail("no builtInLiDARDepthCamera on this device"); return false
+            lastConfigError = "no builtInLiDARDepthCamera on this device"; return false
         }
         session.beginConfiguration()
         var committed = false
-        defer { if !committed { session.commitConfiguration() } }   // balance begin on any early return
+        // On any failure remove partially-added I/O so a retry starts clean — a leftover
+        // videoOut/depthOut makes canAddOutput() return false ("cannot add video output") forever.
+        defer {
+            if !committed {
+                for o in session.outputs { session.removeOutput(o) }
+                for i in session.inputs { session.removeInput(i) }
+                session.commitConfiguration()
+            }
+        }
         session.sessionPreset = .inputPriority        // MUST: else the session overrides activeFormat
 
         do {
             let input = try AVCaptureDeviceInput(device: device)
-            guard session.canAddInput(input) else { reportFail("cannot add camera input"); return false }
+            guard session.canAddInput(input) else { lastConfigError = "cannot add camera input"; return false }
             session.addInput(input)
         } catch {
-            reportFail("camera input error: \(error.localizedDescription)"); return false
+            lastConfigError = "camera input error: \(error.localizedDescription)"; return false
         }
 
-        guard session.canAddOutput(videoOut) else { reportFail("cannot add video output"); return false }
+        guard session.canAddOutput(videoOut) else { lastConfigError = "cannot add video output"; return false }
         videoOut.alwaysDiscardsLateVideoFrames = true
         session.addOutput(videoOut)
 
-        guard session.canAddOutput(depthOut) else { reportFail("cannot add depth output"); return false }
+        guard session.canAddOutput(depthOut) else { lastConfigError = "cannot add depth output"; return false }
         depthOut.isFilteringEnabled = false           // raw depth; holes arrive as NaN (finite-mask them)
         depthOut.alwaysDiscardsLateDepthData = true
         session.addOutput(depthOut)
@@ -93,7 +103,7 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
                 let db = CMVideoFormatDescriptionGetDimensions(b.formatDescription)
                 return Int(da.width) * Int(da.height) < Int(db.width) * Int(db.height)
             }) else {
-            reportFail("no color format supports depth on this device"); return false
+            lastConfigError = "no color format supports depth on this device"; return false
         }
         guard let depthFormat = colorFormat.supportedDepthDataFormats.filter({
             CMFormatDescriptionGetMediaSubType($0.formatDescription) == kCVPixelFormatType_DepthFloat16
@@ -102,7 +112,7 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
             let db = CMVideoFormatDescriptionGetDimensions(b.formatDescription)
             return Int(da.width) * Int(da.height) < Int(db.width) * Int(db.height)
         }) else {
-            reportFail("no DepthFloat16 depth format available"); return false
+            lastConfigError = "no DepthFloat16 depth format available"; return false
         }
         do {
             try device.lockForConfiguration()
@@ -110,7 +120,7 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
             device.activeDepthDataFormat = depthFormat
             device.unlockForConfiguration()
         } catch {
-            reportFail("could not set active formats: \(error.localizedDescription)"); return false
+            lastConfigError = "could not set active formats: \(error.localizedDescription)"; return false
         }
 
         let sync = AVCaptureDataOutputSynchronizer(dataOutputs: [depthOut, videoOut])
@@ -122,16 +132,33 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
         return true
     }
 
-    /// Start the live preview session (call when the toggle selects HQ-Depth).
+    /// Start the live preview session (call when the toggle selects HQ-Depth, or to recover after a
+    /// failure). Retries: on a backend swap the outgoing ARSession may not have released the LiDAR
+    /// camera yet, so lockForConfiguration/addInput can throw transiently — we back off and retry,
+    /// and only surface a failure if all attempts fail (no per-attempt .failed flicker).
     func startPreview() {
         sessionQueue.async { [self] in
-            guard configureIfNeeded(), !session.isRunning else { return }
-            session.startRunning()                    // synchronous; hence off the main queue
+            if session.isRunning { return }
+            var ok = false
+            for attempt in 0..<4 {
+                if configureIfNeeded() { ok = true; break }
+                if attempt < 3 { Thread.sleep(forTimeInterval: 0.2) }   // let a just-released camera settle
+            }
+            guard ok else { reportFail(lastConfigError); return }
+            if !session.isRunning { session.startRunning() }            // synchronous; hence off the main queue
         }
     }
 
     func stopPreview() {
         sessionQueue.async { [self] in
+            if session.isRunning { session.stopRunning() }
+        }
+    }
+
+    /// Synchronous stop for a backend swap: the incoming ARSession must NOT start until this
+    /// AVCaptureSession has actually released the rear camera (else they fight over it).
+    func stopPreviewAndWait() {
+        sessionQueue.sync {
             if session.isRunning { session.stopRunning() }
         }
     }

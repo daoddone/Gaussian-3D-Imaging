@@ -135,9 +135,11 @@ final class CaptureModel {
     /// backend's session so only one owns the camera; the SwiftUI preview swap starts the new one.
     func setBackend(_ b: CaptureBackend) {
         guard b != backend, phase == .idle || phase == .previewing else { return }
+        // Tear the outgoing session down BEFORE flipping backend, so the incoming session doesn't
+        // start while the other still owns the rear camera (black/frozen preview, interruption).
         switch backend {
         case .arkit:    session?.pause()
-        case .hqDepth:  avSource.stopPreview()
+        case .hqDepth:  avSource.stopPreviewAndWait()    // synchronous: camera released before ARKit runs
         }
         backend = b
         trackingMessage = ""
@@ -189,7 +191,15 @@ final class CaptureModel {
         }
 
         // Snapshot the live LiDAR coverage mesh for the post-record inspector (ARKit only).
-        meshNode = backend == .arkit ? MeshSnapshot.node(from: currentMeshAnchors()) : nil
+        // PAUSE the AR session FIRST: scene reconstruction keeps rewriting each ARMeshAnchor's
+        // Metal vertex/face buffers on ARKit's queue, and reading them here (MainActor) while they
+        // mutate is a data race / EXC_BAD_ACCESS. reset() re-runs the config to resume for a new capture.
+        if backend == .arkit {
+            session?.pause()
+            meshNode = MeshSnapshot.node(from: currentMeshAnchors())
+        } else {
+            meshNode = nil
+        }
 
         let meta = CaptureMetadata(
             sessionID: sessionID,
@@ -266,9 +276,16 @@ final class CaptureModel {
         exportURL = nil
         uploadMessage = ""
         frameCount = 0; elapsed = 0; validDepthFraction = 0
+        meshNode = nil
         switch backend {
-        case .arkit:   phase = session == nil ? .idle : .previewing
-        case .hqDepth: phase = .previewing
+        case .arkit:
+            // resume the AR session (it was paused at stop for the safe mesh snapshot); run()
+            // with resetTracking gives a fresh world/mesh for the next capture.
+            if session != nil { runConfiguration() }
+            phase = session == nil ? .idle : .previewing
+        case .hqDepth:
+            avSource.startPreview()          // re-arm the HQ session (recovers from a transient failure)
+            phase = .previewing
         }
     }
 
