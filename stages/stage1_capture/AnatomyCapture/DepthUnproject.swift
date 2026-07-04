@@ -19,9 +19,13 @@ final class PointCloudAccumulator {
 
     /// depth/mask are row-major [H,W] at (dw,dh); K is at color resolution (colorW,colorH) and is
     /// scaled to depth resolution here; R,t are OpenCV camera→world. Subsamples every `step` pixels.
+    /// `minDepth`/`maxDepth` (meters, along the camera ray) gate the subject: dropping points beyond
+    /// `maxDepth` keeps the cloud on the object instead of fusing the whole room (owner report: ARKit
+    /// cloud was "room scale"). LiDAR near-field noise below `minDepth` is dropped too.
     func add(depth: [Float], mask: [UInt8], dw: Int, dh: Int,
              K: [[Double]], colorW: Int, colorH: Int,
-             R: [[Double]], t: [Double], step: Int = 6) {
+             R: [[Double]], t: [Double], step: Int = 6,
+             minDepth: Float = 0.1, maxDepth: Float = 2.0) {
         guard points.count < cap, dw > 0, dh > 0, colorW > 0, colorH > 0,
               depth.count == dw * dh, mask.count == dw * dh else { return }
         let sx = Double(dw) / Double(colorW), sy = Double(dh) / Double(colorH)
@@ -37,8 +41,9 @@ final class PointCloudAccumulator {
             var u = 0
             while u < dw {
                 let idx = v * dw + u
-                if mask[idx] == 255 {
-                    let d = Double(depth[idx])
+                let dz = mask[idx] == 255 ? depth[idx] : 0
+                if dz >= minDepth && dz <= maxDepth {
+                    let d = Double(dz)
                     let xc = Float((Double(u) - cx) / fx * d)
                     let yc = Float((Double(v) - cy) / fy * d)
                     let zc = Float(d)

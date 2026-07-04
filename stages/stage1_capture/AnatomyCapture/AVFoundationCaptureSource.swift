@@ -56,7 +56,8 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
     private var firstKeptTime: TimeInterval?
     private var lastPreviewReport: TimeInterval = 0     // throttle for the live preview valid-depth readout
     private let identityR = matrix_identity_float3x3   // no live pose -> selector uses time-stride only
-    private let cloud = PointCloudAccumulator()         // single-view coverage cloud (no pose) for the inspector
+    private let cloud = PointCloudAccumulator()         // per-frame single-view cloud (no pose to fuse)
+    private var bestCloud: [SIMD3<Float>] = []          // densest kept frame -> the post-record inspector
 
     init(ciContext: CIContext, colorSpace: CGColorSpace) {
         self.ciContext = ciContext
@@ -240,11 +241,12 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
             index = 0
             firstKeptTime = nil
             cloud.reset()
+            bestCloud = []
         }
     }
 
-    /// The single-view coverage cloud (most recent kept frame; HQ has no pose). dataQueue-confined.
-    func cloudPoints() -> [SIMD3<Float>] { dataQueue.sync { cloud.points } }
+    /// The densest single-view coverage cloud (HQ has no pose to fuse frames). dataQueue-confined.
+    func cloudPoints() -> [SIMD3<Float>] { dataQueue.sync { bestCloud } }
 
     func stopWriting() {
         dataQueue.sync { recording = false; writer = nil }
@@ -310,11 +312,14 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
             R: nil, t: nil,                            // AVFoundation: no pose
             K: K, time: relTime, validDepthFraction: validFrac))
 
-        // HQ has no pose -> keep a single-view cloud of the most recent kept frame for the inspector.
+        // HQ has no pose -> can't fuse frames; keep the DENSEST single frame (best coverage view).
+        // Fine sampling (step 2) + a tight depth cutoff, since it's just one frame of the subject.
         cloud.reset()
         cloud.add(depth: depth, mask: mask, dw: dw, dh: dh, K: K,
                   colorW: colorW, colorH: colorH,
-                  R: PointCloudAccumulator.identityR, t: PointCloudAccumulator.zeroT)
+                  R: PointCloudAccumulator.identityR, t: PointCloudAccumulator.zeroT,
+                  step: 2, maxDepth: 1.5)
+        if cloud.points.count > bestCloud.count { bestCloud = cloud.points }
 
         let kept = selector.kept
         Task { @MainActor [weak model] in
