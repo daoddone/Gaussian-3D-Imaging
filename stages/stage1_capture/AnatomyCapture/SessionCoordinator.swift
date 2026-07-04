@@ -32,7 +32,12 @@ nonisolated final class SessionCoordinator: NSObject, ARSessionDelegate, @unchec
     private var firstKeptTime: TimeInterval?
     private var trackingNormalThroughout = true
     private var lastPreviewReport: TimeInterval = 0     // throttle for the live preview valid-depth readout
-    let cloud = PointCloudAccumulator()                 // world coverage cloud for the post-record inspector
+    let cloud = PointCloudAccumulator()                 // world coverage cloud (post-record + live overlay)
+    // The accumulator lives on the delegate queue; the live overlay reads from the main thread, so we
+    // publish a COW snapshot under a lock (the assignment/read is O(1); the buffer is shared, then
+    // copy-on-write diverges when the accumulator next mutates — so the reader sees a stable cloud).
+    private let cloudLock = NSLock()
+    private var displaySnapshot: [SIMD3<Float>] = []
 
     init(ciContext: CIContext, colorSpace: CGColorSpace, confidenceThreshold: UInt8, depthMode: String) {
         self.ciContext = ciContext
@@ -50,10 +55,17 @@ nonisolated final class SessionCoordinator: NSObject, ARSessionDelegate, @unchec
         firstKeptTime = nil
         trackingNormalThroughout = true
         cloud.reset()
+        publishCloud()
     }
 
     /// The accumulated world coverage cloud (delegate-queue confined; read at stop on that queue).
     func cloudPoints() -> [SIMD3<Float>] { cloud.points }
+
+    /// Publish the current cloud for the live overlay (call on the delegate queue). COW → O(1).
+    private func publishCloud() { cloudLock.lock(); displaySnapshot = cloud.points; cloudLock.unlock() }
+
+    /// Thread-safe snapshot of the growing cloud for the live overlay (safe to call from any thread).
+    func displayCloudSnapshot() -> [SIMD3<Float>] { cloudLock.lock(); defer { cloudLock.unlock() }; return displaySnapshot }
 
     /// Stop recording; no further frames are appended. Returns whether tracking
     /// stayed normal for the whole recording. MUST be dispatched onto the
@@ -124,6 +136,7 @@ nonisolated final class SessionCoordinator: NSObject, ARSessionDelegate, @unchec
 
         cloud.add(depth: depth, mask: mask, dw: dw, dh: dh, K: Kd,
                   colorW: colorW, colorH: colorH, R: R, t: t)
+        publishCloud()                                     // refresh the live overlay snapshot
 
         let kept = selector.kept
         Task { @MainActor [weak model] in

@@ -1,34 +1,9 @@
 import SwiftUI
 import ARKit
-import RealityKit
 
-/// ARKit live preview (RealityKit `ARView` owns the `ARSession`). `dismantleUIView` pauses the
-/// session when SwiftUI swaps to the AVFoundation preview, so only one backend owns the camera.
-struct ARViewContainer: UIViewRepresentable {
-    let model: CaptureModel
-    let showOverlay: Bool          // draw the LiDAR coverage mesh, or plain camera video
-
-    func makeUIView(context: Context) -> ARView {
-        let view = ARView(frame: .zero, cameraMode: .ar, automaticallyConfigureSession: false)
-        view.environment.background = .cameraFeed()
-        applyOverlay(view)
-        model.bind(session: view.session)
-        return view
-    }
-
-    // Re-invoked whenever showOverlay changes (SwiftUI observes model.showOverlay via the parent).
-    func updateUIView(_ uiView: ARView, context: Context) { applyOverlay(uiView) }
-
-    /// Overlay is display-only: toggling debugOptions never touches the saved capture buffers.
-    private func applyOverlay(_ v: ARView) {
-        if showOverlay { v.debugOptions.insert(.showSceneUnderstanding) }
-        else { v.debugOptions.remove(.showSceneUnderstanding) }
-    }
-
-    static func dismantleUIView(_ uiView: ARView, coordinator: ()) {
-        uiView.session.pause()
-    }
-}
+// The ARKit live preview now lives in ARPointCloudView (ARSCNView + live accumulated point-cloud
+// overlay). It replaced the RealityKit ARView + scene-mesh wireframe, which rendered occluded
+// geometry through foreground objects (owner report) and couldn't draw a point cloud.
 
 /// Centered reticle + crosshair guidance overlay.
 struct ReticleOverlay: View {
@@ -58,7 +33,7 @@ struct CaptureView: View {
             if CaptureModel.isSupported() {
                 // Preview branches on the selected backend; swapping tears down the other session.
                 if model.backend == .arkit {
-                    ARViewContainer(model: model, showOverlay: model.showOverlay).ignoresSafeArea()
+                    ARPointCloudView(model: model, showCloud: model.showOverlay).ignoresSafeArea()
                 } else {
                     AVCapturePreview(source: model.avSource).ignoresSafeArea()
                 }
@@ -116,7 +91,7 @@ struct CaptureView: View {
                         .foregroundStyle(model.showOverlay ? .green : .white)
                         .padding(8).background(.black.opacity(0.35), in: Circle())
                 }
-                .accessibilityLabel(model.showOverlay ? "Hide coverage mesh" : "Show coverage mesh")
+                .accessibilityLabel(model.showOverlay ? "Hide coverage cloud" : "Show coverage cloud")
                 .padding(.trailing, 6)
             }
             // Focus toggle (HQ-Depth only; ARKit manages its own focus). Auto = continuous
