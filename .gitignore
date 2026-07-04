@@ -47,3 +47,5 @@ swiftly.pkg
 
 # sweetpad / xcode-build-server integration for VS Code (regenerated per machine)
 buildServer.json
+# Bundle-adjustment tools cloned locally (hloc etc.)
+third_party/

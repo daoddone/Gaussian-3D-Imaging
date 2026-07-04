@@ -50,11 +50,13 @@ def _load_confidence(path):
     return a >= 128
 
 
-def load_dataset(session, downscale, device):
-    """Return list of per-frame dicts and a scene-scale estimate."""
+def load_dataset(session, downscale, device, colmap_dir=None):
+    """Return list of per-frame dicts and a scene-scale estimate. ``colmap_dir``
+    overrides the default metric COLMAP model (used for the pose A/B)."""
     lay = SessionLayout(session)
-    cams = colmap_io.read_cameras_binary(lay.metric_colmap / "cameras.bin")
-    imgs = colmap_io.read_images_binary(lay.metric_colmap / "images.bin")
+    cdir = Path(colmap_dir) if colmap_dir else lay.metric_colmap
+    cams = colmap_io.read_cameras_binary(cdir / "cameras.bin")
+    imgs = colmap_io.read_images_binary(cdir / "images.bin")
 
     frames = []
     for img_id in sorted(imgs):
@@ -231,15 +233,16 @@ def depth_to_normal(depth, K):
 # train
 # --------------------------------------------------------------------------- #
 def train(session, cfg, iters, downscale, depth_lambda, sh_degree, device,
-          normal_lambda=0.0, normal_warmup=1000):
+          normal_lambda=0.0, normal_warmup=1000, colmap_dir=None, init_ply=None,
+          max_init_points=200000):
     from gsplat import rasterization
     from gsplat.strategy import DefaultStrategy
 
-    frames, scene_scale = load_dataset(session, downscale, device)
+    frames, scene_scale = load_dataset(session, downscale, device, colmap_dir=colmap_dir)
     if not frames:
         raise SystemExit("[stage5] no frames loaded from metric COLMAP + capture/rgb")
     lay = SessionLayout(session)
-    params = build_gaussians(lay.metric_points, True, device)
+    params = build_gaussians(init_ply or lay.metric_points, True, device, max_points=max_init_points)
     print(f"[stage5] {len(frames)} views | {params['means'].shape[0]} init gaussians | scene_scale={scene_scale:.3f}")
 
     lr = {"means": 1.6e-4 * scene_scale, "scales": 5e-3, "quats": 1e-3,
@@ -384,20 +387,28 @@ def reconstruct(session, opts):
     depth_lambda = float(opts.get("depth_lambda", 0.2))
     sh_degree = int(opts.get("sh_degree", 3))
     normal_lambda = float(opts.get("normal_lambda", 0.0))   # >0 uses Stage 4 normals if present
+    colmap_dir = opts.get("colmap_dir")
+    init_ply = opts.get("init_ply")
+    max_init_points = int(opts.get("max_init_points", 200000))
 
     params, frames = train(session, {}, iters, downscale, depth_lambda, sh_degree, device,
-                           normal_lambda=normal_lambda)
+                           normal_lambda=normal_lambda, colmap_dir=colmap_dir, init_ply=init_ply,
+                           max_init_points=max_init_points)
 
     lay = SessionLayout(session)
-    lay.output.mkdir(parents=True, exist_ok=True)
-    export_ply(params, lay.output_point_cloud)
-    nv, nt = export_mesh_and_renders(params, frames, lay.output, sh_degree, device)
+    out = Path(opts["output_dir"]) if opts.get("output_dir") else lay.output
+    out.mkdir(parents=True, exist_ok=True)
+    export_ply(params, out / "point_cloud.ply")
+    nv, nt = export_mesh_and_renders(params, frames, out, sh_degree, device)
     prov = {"stage5_host": "gsplat (depth-supervised)", "gaussians": int(params["means"].shape[0]),
             "views": len(frames), "iters": iters, "downscale": downscale,
-            "depth_lambda": depth_lambda, "mesh_vertices": nv, "mesh_triangles": nt}
-    (lay.output / "provenance_stage5.json").write_text(json.dumps(prov, indent=2))
-    print(f"[stage5] DONE: splat={lay.output_point_cloud} ({params['means'].shape[0]} gaussians), "
-          f"mesh={lay.output/'mesh.ply'} ({nv} verts / {nt} tris)")
+            "depth_lambda": depth_lambda, "normal_lambda": normal_lambda,
+            "colmap_dir": str(colmap_dir) if colmap_dir else "metric/colmap/sparse/0",
+            "init_ply": str(init_ply) if init_ply else "metric/points_metric.ply",
+            "mesh_vertices": nv, "mesh_triangles": nt}
+    (out / "provenance_stage5.json").write_text(json.dumps(prov, indent=2))
+    print(f"[stage5] DONE: splat={out/'point_cloud.ply'} ({params['means'].shape[0]} gaussians), "
+          f"mesh={out/'mesh.ply'} ({nv} verts / {nt} tris)")
     return prov
 
 
@@ -410,10 +421,16 @@ def main():
     ap.add_argument("--depth-lambda", type=float, default=0.2)
     ap.add_argument("--normal-lambda", type=float, default=0.0)
     ap.add_argument("--sh-degree", type=int, default=3)
+    ap.add_argument("--colmap-dir", default=None, help="override metric COLMAP dir (pose A/B)")
+    ap.add_argument("--init-ply", default=None, help="override init point cloud")
+    ap.add_argument("--output-dir", default=None, help="override output dir")
+    ap.add_argument("--max-init-points", type=int, default=200000, help="cap on init cloud points")
     args = ap.parse_args()
     reconstruct(args.session, {"iters": args.iters, "downscale": args.downscale,
                                "depth_lambda": args.depth_lambda, "sh_degree": args.sh_degree,
-                               "normal_lambda": args.normal_lambda})
+                               "normal_lambda": args.normal_lambda, "colmap_dir": args.colmap_dir,
+                               "init_ply": args.init_ply, "output_dir": args.output_dir,
+                               "max_init_points": args.max_init_points})
     return 0
 
 
