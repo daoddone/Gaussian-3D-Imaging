@@ -26,6 +26,10 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
     weak var model: CaptureModel?
     let session = AVCaptureSession()
 
+    /// The LiDAR device backing the session, exposed so the preview can build a
+    /// `RotationCoordinator` for a horizon-level display (display-only; see `AVCapturePreview`).
+    private(set) var activeDevice: AVCaptureDevice?
+
     private let ciContext: CIContext
     private let colorSpace: CGColorSpace
     private let sessionQueue = DispatchQueue(label: "avf.session", qos: .userInitiated)
@@ -66,6 +70,7 @@ nonisolated final class AVFoundationCaptureSource: NSObject,
         guard let device = AVCaptureDevice.default(.builtInLiDARDepthCamera, for: .video, position: .back) else {
             lastConfigError = "no builtInLiDARDepthCamera on this device"; return false
         }
+        activeDevice = device
         session.beginConfiguration()
         var committed = false
         // On any failure remove partially-added I/O so a retry starts clean — a leftover
