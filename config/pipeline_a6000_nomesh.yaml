@@ -1,0 +1,42 @@
+# A6000 config variant for the DENSITY comparison experiment (owner request).
+# IDENTICAL to config/pipeline_a6000.yaml except stage5.dense_gaussians = false — the base MILo
+# densifier instead of the aggressive dense_gaussians. Run Stage 5 with this on the SAME session
+# (Stage 2/3 outputs reused) and compare the mesh/cloud to the dense result. See EXPERIMENTS_BACKLOG.
+stages:
+  stage2_frontend: { enabled: true,  env: pipeline_stage2_frontend,      entry: stages/stage2_frontend/run.py }
+  stage3_metric:   { enabled: true,  env: pipeline_stage3_metric,        entry: stages/stage3_metric/run.py }
+  stage4_normals:  { enabled: false, env: pipeline_stage4_normals,       entry: stages/stage4_normals/run.py }
+  stage5_reconstruction: { enabled: true, env: pipeline_stage5_reconstruction, entry: stages/stage5_reconstruction/run.py }
+
+stage2:
+  model: DA3NESTED-GIANT-LARGE
+  use_ray_pose: true
+  free_geometry_refinement: false
+  pose_conditioning: true
+  bf16: false
+  export_formats: [ply, npz]
+  max_frames: null
+
+stage3:
+  agreement_threshold_percent: 3.0
+  min_depth_inlier_fraction: 0.30
+  depth: { min_valid_depth_m: 0.05, max_valid_depth_m: 5.0, ransac_iterations: 200, ransac_inlier_tol: 0.10, fit_offset: false }
+  icp: { enabled: true, max_correspondence_distance_m: 0.02, max_iterations: 50 }
+  colmap: { bake_points: true, max_points: 100000 }
+  ruler: { known_size_meters: null }
+  flag_halts_pipeline: false
+
+stage4: { model: StableNormal_turbo, fixed_weight: 0.05, confidence_tied_weight: false }
+
+stage5:
+  host: milo
+  milo_resolution: 1
+  data_device: cuda
+  dense_gaussians: true            # dense cloud (crash was mesh-reg, not density)
+  depth_lambda: 0.2
+  imp_metric: indoor
+  milo_crop_pad: 0.10
+  mesh_regularization: false      # pose-free path: skip crashing in-loop mesh; cloud only
+
+paths:
+  sessions_root: sessions

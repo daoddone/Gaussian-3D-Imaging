@@ -196,25 +196,37 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
         # Tradeoff: it slightly roughens flat regions (redistribution, not a strict win). REVISIT on the
         # A6000 — tune MILo's regularizers + add feature-preserving smoothing (docs/EXPERIMENTS_BACKLOG.md).
         train_cmd.append("--dense_gaussians")
+    # In-loop mesh regularization is MILo's core feature, but its nvdiffrast rasterization crashes
+    # (CUDA 700) reproducibly for the pose-free (DA3-estimated-pose) path at the simplification step —
+    # the mesh degenerates during training. Disable it there to still get the gaussian cloud (the
+    # primary output); no learnable SDF is produced, so mesh extraction/scale-down is skipped.
+    mesh_reg = bool(opt.get("mesh_regularization", True))
+    if not mesh_reg:
+        train_cmd.append("--no_mesh_regularization")
     subprocess.run(train_cmd, cwd=str(MILO_DIR), env=env, check=True)
-    subprocess.run([str(MILO_ENV_PY), "mesh_extract_sdf.py", "-s", str(scaled_ds), "-m", str(raw_out),
-                    "--rasterizer", "radegs"], cwd=str(MILO_DIR), env=env, check=True)
+    if mesh_reg:
+        subprocess.run([str(MILO_ENV_PY), "mesh_extract_sdf.py", "-s", str(scaled_ds), "-m", str(raw_out),
+                        "--rasterizer", "radegs"], cwd=str(MILO_DIR), env=env, check=True)
 
     # 3) scale outputs back to METRIC + write the Stage-6 contract
     it_dirs = sorted((raw_out / "point_cloud").glob("iteration_*"), key=lambda p: int(p.name.split("_")[1]))
     gz_in = it_dirs[-1] / "point_cloud.ply"
     n_g, gxyz = _scale_down_gaussians(gz_in, output_dir / "point_cloud.ply", S)
-    # crop the mesh to the object (Gaussian-cloud) box + pad so it comes out object-tight,
-    # not enclosing the whole scene. Disable with options milo_crop_pad < 0.
-    pad = float(opt.get("milo_crop_pad", 0.10))
-    crop = _object_box(gxyz, pad_frac=pad) if pad >= 0 else None
-    nv, nf = _scale_down_mesh(raw_out / "mesh_learnable_sdf.ply", output_dir / "mesh.ply", S, crop_box=crop)
+    nv, nf, pad, crop = 0, 0, float(opt.get("milo_crop_pad", 0.10)), None
+    if mesh_reg:
+        # crop the mesh to the object (Gaussian-cloud) box + pad so it comes out object-tight,
+        # not enclosing the whole scene. Disable with options milo_crop_pad < 0.
+        crop = _object_box(gxyz, pad_frac=pad) if pad >= 0 else None
+        nv, nf = _scale_down_mesh(raw_out / "mesh_learnable_sdf.ply", output_dir / "mesh.ply", S, crop_box=crop)
 
-    prov = {"stage5_host": "MILo (in-loop mesh, depth-supervised)",
-            "gaussians": n_g, "views": n_imgs, "depth_lambda": depth_lambda,
+    prov = {"stage5_host": "MILo (in-loop mesh, depth-supervised)" if mesh_reg else "MILo (splatting only, mesh reg off)",
+            "gaussians": n_g, "views": n_imgs, "depth_lambda": depth_lambda, "mesh_regularization": mesh_reg,
             "milo_scale": S, "nerf_radius": radius, "imp_metric": imp_metric,
             "mesh_vertices": nv, "mesh_triangles": nf, "mesh_cropped_to_object_pad": pad if crop else None,
             "rasterizer": "radegs", "note": "trained scaled x1/radius; outputs re-metriced /S; mesh cropped to Gaussian box+pad"}
     (output_dir / "provenance_stage5.json").write_text(json.dumps(prov, indent=2))
-    print(f"[milo] DONE: {output_dir}/point_cloud.ply ({n_g} gaussians), mesh.ply ({nv} verts / {nf} tris)")
+    if mesh_reg:
+        print(f"[milo] DONE: {output_dir}/point_cloud.ply ({n_g} gaussians), mesh.ply ({nv} verts / {nf} tris)")
+    else:
+        print(f"[milo] DONE: {output_dir}/point_cloud.ply ({n_g} gaussians), mesh reg OFF (cloud only)")
     return prov
