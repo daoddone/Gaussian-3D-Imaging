@@ -169,6 +169,25 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
     resolution = str(opt.get("milo_resolution", 1))          # -r (1 = full res as-loaded)
     dense = bool(opt.get("dense_gaussians", True))           # default ON (recovers thin structure)
     data_device = str(opt.get("data_device", "cpu"))         # "cpu" fits the A4000; "cuda" is faster on the A6000
+    mesh_reg = bool(opt.get("mesh_regularization", True))    # in-loop mesh (MILo's core); off = cloud-only
+
+    # nvdiffrast's CUDA rasterizer caps the in-loop MESH render at 2048 px/side. A capture whose color
+    # resolution exceeds that (the HQ-Depth 4032x3024 path) triggers a CUDA-700 illegal address in
+    # nvdiffrast's fineRasterKernel at the first mesh build (iter 8001) — reproducible, pose- AND
+    # density-independent; ARKit's 1920x1440 is under the cap and unaffected. (v0.3.3's >2048 auto-tiling
+    # fails on this compiled build.) This is a HARD rasterizer limit, not a quality knob: cap the training
+    # resolution so max(w,h) <= 2048 whenever mesh regularization is on. Logged for transparency. As a
+    # side benefit it equalizes render resolution vs the ARKit path (2016 vs 1920) for a fair comparison.
+    if mesh_reg:
+        _cams = colmap_io.read_cameras_binary(Path(dataset_dir) / "sparse" / "0" / "cameras.bin")
+        _max_side = max(max(int(c["width"]), int(c["height"])) for c in _cams.values())
+        _r = int(resolution)
+        while _max_side / _r > 2048 and _r < 8:
+            _r *= 2
+        if _r != int(resolution):
+            print(f"[milo] nvdiffrast 2048 mesh-raster cap: capture {_max_side}px at -r {resolution} exceeds "
+                  f"2048 -> using -r {_r} (~{_max_side // _r}px) so the in-loop mesh rasterizes")
+            resolution = str(_r)
 
     # 1) scene scale -> ~unit range for the rasterizer
     radius = _nerf_radius(dataset_dir / "sparse" / "0")
@@ -191,6 +210,9 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
                  "--imp_metric", imp_metric, "--rasterizer", "radegs", "-r", resolution, "--quiet",
                  "--lidar_depth_dir", str(capture_dir), "--lidar_depth_lambda", str(depth_lambda),
                  "--lidar_depth_scale", str(S), "--data_device", data_device]
+    mesh_config_name = str(opt.get("mesh_config", "default"))
+    if mesh_config_name and mesh_config_name != "default":
+        train_cmd += ["--mesh_config", mesh_config_name]   # MILo mesh tet-grid preset: verylowres..veryhighres
     if dense:
         # --dense_gaussians recovers thin structure (glasses frame, edges) the base densifier drops.
         # Tradeoff: it slightly roughens flat regions (redistribution, not a strict win). REVISIT on the

@@ -172,26 +172,86 @@ Owner hypothesis: bumpiness is from the high `dense_gaussians` setting; lower it
 this (vs the poor sunglasses capture where dense earned its place). **Largely correct — one important
 correction/addition:**
 
-- **The dominant effect is scene scale, not the density knob.** This reconstruction is **~2.4 m** (it
-  fused the feet + stand + floor + a background object — see the eval render). 406k gaussians spread
-  over 2.4 m means the feet get only a *fraction* of the budget → veins are under-resolved. So **lowering
-  total density would make vein detail worse, not better** — density and fine detail trade off *within a
-  region*. The real lever for BOTH bumpiness and vein detail is **subject isolation** (concentrate the
-  gaussian budget on the feet): fewer background/floater gaussians → less bumpiness, AND more gaussians
-  per cm² on the subject → finer veins. The mesh crop only trims the *mesh* to the gaussian box; the
-  *gaussians* are still scene-scale, so it doesn't help.
-- **Scale is flagged** (`anchors_disagree`, applied 1.0; near-field LiDAR) — so any "true anatomy vs
-  reconstruction" metric here carries a scale caveat until the capture distance / scale is nailed down.
-- **Three coupled knobs**, sweep one at a time so effects are separable:
+- **CORRECTION (owner was right, earlier note was wrong): reconstruction-side isolation does NOT sharpen
+  the subject.** Verified in MILo code: densification is **gradient-driven** (`densify_and_clone/split` on
+  `densify_grad_threshold`) — gaussians are added wherever the render mismatches the image, so the feet get
+  as many as *their own* error demands, independent of the background. Simplification is **importance-
+  weighted** (`simp_iteration` keeps the gaussians carrying most importance mass), so low-texture background
+  is pruned harder, not the subject. **There is no shared budget the background steals from the center.**
+- **What actually limits vein detail is PIXEL COVERAGE at capture time.** Veins ~1–2 mm: if the feet span
+  only a couple hundred px in the frame, the veins are barely sampled in the input images → no photometric
+  gradient to densify them → they can't be recovered (you can't reconstruct detail the pixels never
+  captured). Fill the frame (capture closer) → veins span many px → gradient drives densification → detail.
+  **This is a CAPTURE lever (distance/framing), not a reconstruction crop.** A post-hoc crop adds no pixels.
+- **Where reconstruction-side isolation DOES help:** (a) **mesh bumpiness** — removing background/floater
+  gaussians gives a cleaner mesh; (b) **scale** — the `anchors_disagree` flag (applied 1.0, near-field
+  LiDAR) is driven partly by background depth. So isolation is a **de-clutter + scale-robustness** win, not
+  a sharpness win. Any "true anatomy vs reconstruction" metric carries a scale caveat until scale is nailed.
+- **Knobs, sweep one at a time so effects are separable:**
   1. **Density** — `dense_gaussians` on/off (config: `pipeline_a6000_lowdensity.yaml`). Smoother mesh vs
-     more detail.
-  2. **Subject isolation** — crop the reconstruction *input* to the subject (a depth/spatial cutoff like
-     the one now in the capture overlay, applied to the DA3 cloud / metric points before MILo). Expected
-     biggest win.
-  3. **Regularizers** — MILo normal-consistency / distortion weights (the "feature-preserving smoothing"
-     dial): smoothness vs detail without changing gaussian count.
+     more surface variation (does NOT change the input-pixel detail ceiling).
+  2. **Subject isolation** (crop DA3 cloud / metric points before MILo) — for bumpiness + scale, not detail.
+  3. **Regularizers** — MILo normal-consistency / distortion weights: smoothness vs detail at fixed count.
+  4. **Capture distance/framing** (the real detail lever) — a re-capture filling the frame with the feet.
 
 **Method (cheap):** Stage 2/3 outputs are reused; only Stage 5 re-runs (~2 h each on A6000). Preserve
 the current dense result (`mv output output_dense`), run each variant to its own `output_<label>/`, and
 the owner reviews as each completes to steer the next. Do ARKit-vs-ARKit and HQ-vs-HQ separately (never
 cross-compare — different pose sources). Run AFTER the in-flight HQ dense run finishes.
+
+---
+
+## AUDIT + PRIORITIZED NEXT-EXPERIMENT MATRIX (2026-07-05, post overnight knob-sweep)
+
+Status vs work done (see `docs/DAILY_NOTES.md` + `docs/SWEEP_RESULTS.md`):
+- **DONE this session:** HQ-Depth capture method (SfM poses via `03b_relock_lidar.py` + LiDAR metric-lock,
+  cloud+mesh produced); MILo mesh-crash root-caused+fixed (**nvdiffrast 2048-px CUDA-raster cap**, NOT
+  poses — HQ 4032>2048); density A/B (dense→smoother ~2-3°, both methods, costs ~10× detail); mesh_config
+  A/B (lowres = ROUGHER — dead end for smoothness).
+- **PARTIAL:** depth_lambda A/B (ARKit depth0 in-flight); dense_gaussians tuning (regularizer/smoothing
+  sub-items pending); feet knob-sweep (isolation/regularizers/re-capture pending).
+- **STILL PENDING (pre-existing backlog):** hand session 203728 near-field-bias test; DA3-K vs device-K.
+
+**Coverage gaps found (testable — now tracked):**
+1. Photorealism held-out eval with the CORRECT radegs rasterizer + LPIPS (MILo appearance only scored via
+   the wrong gsplat rasterizer, PSNR 23.5 lower-bound → photoreal half has NO clean number).
+2. RESOLVE (not just diagnose) the ~12% LiDAR-vs-VIO scale ambiguity via an independent ruler/known-size
+   anchor (`stage3.ruler.known_size_meters` is null/unused, though the anchor is built).
+3. Ground-truth vs a Canfield Vectra reference — the actual ~1mm acceptance test — NEVER measured.
+4. Frame-count A/B (all frames vs old 48-cap) — payoff of the lifted cap unverified.
+5. MILo iteration/convergence sweep at full res.
+6. Mesh-follows-cloud Chamfer guardrail before/after any crop/smoothing.
+
+**Prioritized matrix (toward ~1mm metric + photoreal):**
+| # | experiment | goal | effort | why |
+|---|---|---|---|---|
+| 1 | **Subject isolation** (image-mask photometric loss + box-prune + output-crop) | metric scale + cleanliness | small | top untested lever; HQ over-reconstructs background (5.3 m); background depth drives the scale flag |
+| 2 | **Independent scale anchor** (ruler/known-size) | metric ~1mm | medium | attacks the confirmed 1mm limiter; anchor built but unused |
+| 3 | **Fill-frame re-capture** of the feet | photoreal + detail | medium | the REAL detail lever (capture-time pixel coverage); no Stage-5 knob substitutes |
+| 4 | **Photoreal eval** (radegs render + PSNR/SSIM/LPIPS) | photoreal gate | small | can't steer photoreal without measuring it |
+| 5 | **Regularizer tuning** (depth_ratio↓ + normal_weight↑) | mesh quality | medium | smoother WITHOUT the ~10× detail loss density costs |
+| 6 | Finish depth_lambda A/B | metric | small | in-flight |
+| 7 | Hand session near-field-bias test | metric (limiter) | medium | pre-registered scale prediction |
+| 8 | Frame-count A/B | metric+photoreal | small | verify the lifted cap |
+| 9 | Vectra ground-truth | metric (done-def) | large | blocked on a reference scan |
+| 10 | Feature-preserving smoothing | mesh polish | medium | after #5, with Chamfer guardrail |
+
+**Honest goals progress:** at **few-mm internally, NOT verified at 1mm**; the ~12% LiDAR-vs-VIO scale
+ambiguity (real limiter) is diagnosed but UNRESOLVED; MILo photorealism is essentially UNMEASURED (only a
+wrong-rasterizer lower bound). Pose drift decisively ruled out. Highest-value: #1 isolation, #2 scale
+anchor, #3 fill-frame re-capture.
+
+**Implementation notes (design agent) for the top levers:**
+- **Subject isolation** must mask the PHOTOMETRIC loss (MILo `train.py:221-229`), not just the init —
+  densification is gradient-driven, so only removing the background RGB gradient stops background
+  Gaussians; add an out-of-mask opacity penalty + a periodic box-prune; keep the output mesh-crop.
+  Detect the subject box via **camera-optical-axis intersection** c* (background-independent) → densest
+  cluster → project the 3D box into each frame for per-frame masks (no SAM dependency). Touch
+  `milo_supervised.py`, `supervision/ags_depth_normal_losses.py`, `third_party/MILo/milo/train.py`.
+- **Regularizers:** sweep `depth_ratio` {1.0,0.6,0.4} × `normal_weight` {0.05,0.2} in
+  `third_party/MILo/milo/configs/mesh/*.yaml` (via the new `options['mesh_config']` plumbing). Leave
+  `n_max_points_in_delaunay` (resolution, the lowres dead-end) and the occupancy weights (topology, not
+  smoothness). Run AFTER subject isolation so the metric isn't polluted by background tets.
+- **Fair ARKit-vs-HQ accuracy** is NOT possible from the current captures (moved live subject, no
+  reference, scale ambiguity) — needs a STATIC phantom + known-size fiducial + a reference scan, isolation
+  applied identically, then scale-locked rigid ICP to the reference. Current table = method-quality only.
