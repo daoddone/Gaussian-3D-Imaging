@@ -128,6 +128,14 @@ Reproduce with scripts/pose_ba/milo_build_env2.sh -> milo_build_submodules.sh ->
    our METRIC scenes are ~0.1 units; the INRIA-lineage rasterizer overflows at that scale (gsplat
    tolerated it). -> train at scene scaled to ~unit (S = 1/nerf_radius), re-metric outputs /S.
    This is baked into milo_supervised.py (auto-scale) and threaded into the depth loss.
+6. Runtime (2026-07-05): nvdiffrast's CUDA rasterizer caps output at **2048 px/side**; the HQ-Depth path
+   renders the in-loop mesh at full 4032x3024 -> **CUDA 700** (illegal address in fineRasterKernel) at the
+   FIRST mesh build (iter 8001). ARKit's 1920x1440 is under the cap and unaffected. (nvdiffrast v0.3.3's
+   claimed >2048 auto-tiling fails on this compiled build.) -> milo_supervised.py caps `-r` so
+   max(w,h) <= 2048 when mesh reg is on (HQ -> -r2/2016). NOT poses/geometry: the mesh handed to
+   nvdiffrast is verified finite/in-range; confirmed by a 30-s half-res repro from the iter-8000
+   checkpoint (chkpnt8000.pth). Fast-repro tip: `train.py --start_checkpoint chkpnt8000.pth` rebuilds
+   the 8001 mesh immediately. Also added: `mesh_config` passthrough (options['mesh_config']).
 
 **Depth port (H2) — 3 flag-guarded edits to milo/train.py + supervision/ags_depth_normal_losses.py:**
 - args `--lidar_depth_dir/--lidar_depth_lambda/--lidar_depth_scale`; loss block after the base
@@ -159,5 +167,11 @@ Marching-Tetrahedra); gaussians -> <out>/point_cloud/iteration_N/point_cloud.ply
 - Appearance (MILo gaussians rendered via gsplat, a convention mismatch -> LOWER BOUND): PSNR 23.5
   vs gsplat-30k 27.2. Expected: MILo trades radiance for surface alignment (user: MILo is a mesh
   upgrade, not an image-quality one) + eval renders radegs-trained gaussians with the wrong rasterizer.
-- Tuning levers to try next (not yet done): --mesh_config highres, --dense_gaussians, more iters,
-  face-crop, depth_lambda sweep. First run already beats the TSDF on smoothness.
+- Tuning levers — SWEPT 2026-07-05 on real feet captures (full results: docs/SWEEP_RESULTS.md):
+  **density** down -> smoother mesh (~2-3deg dihedral, both ARKit+HQ, but costs ~10x detail);
+  **depth_lambda** down -> smoother (~5deg, the BIGGEST lever — ARKit's noisy 256x192 LiDAR supervision
+  is a larger bumpiness source than density; 21deg->16deg with LiDAR off) but risks over-smoothing real
+  relief; **--mesh_config lowres -> ROUGHER (dead end** — coarser tet grid = blockier mesh, not smoother).
+  NOT yet done: **regularizer weights** (depth_ratio down / normal_weight up = the smoother-without-detail-
+  loss path), **subject isolation** (HQ over-reconstructs background -> top lever), more iters. HQ-Depth
+  now also runs through MILo (SfM poses via scripts/pose_ba/03b_relock_lidar.py; -r2 per blocker #6).

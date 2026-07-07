@@ -6,6 +6,27 @@ The full pipeline was run end-to-end on a real capture from an **iPhone 14 Pro
 subject at ~25 cm. All heavy stages ran on the target **NVIDIA RTX A4000 (16 GB,
 driver 535 / CUDA 12.2)**.
 
+> ## ⚠️ Update — 2026-07-05 (current pipeline state; read this first)
+> The run documented below is the **original A4000 / gsplat / sunglasses baseline** (session `145121`).
+> The pipeline has since advanced substantially:
+> - **Stage-5 host is now MILo** (mesh-in-the-loop learnable-SDF), built + working on the A6000 and the
+>   default for the metric-mesh deliverable — the note below that "MILo is shelved" is **superseded**.
+> - **MILo mesh-crash root-caused + fixed:** nvdiffrast's CUDA rasterizer caps at **2048 px/side**;
+>   captures above it (the HQ-Depth 4032-px path) crashed (CUDA 700 in `fineRasterKernel`), ARKit at
+>   1920 was fine. `stages/stage5_reconstruction/milo_supervised.py` now caps `-r` so `max(w,h) ≤ 2048`
+>   (HQ → -r 2 / 2016). Not poses, not a numerical degeneracy.
+> - **HQ-Depth capture method is working:** poses recovered by unseeded SfM + a new LiDAR metric-lock
+>   (`scripts/pose_ba/03b_relock_lidar.py`, S=0.078 @ 1.0% MAD), producing cloud **+ mesh**, compared
+>   against ARKit on real feet captures.
+> - **Pose drift is NOT the accuracy ceiling** (verified: 3 independent pose methods agree ~1-2 mm) —
+>   the "next steps" note below about pose drift is **corrected**. The real ~1 mm limiter is the ~12%
+>   LiDAR-vs-VIO near-field scale ambiguity, diagnosed but still **unresolved** (no independent anchor tried).
+> - **Knob-sweep findings** (feet, MILo): density↓ AND depth_lambda↓ both smooth the mesh (LiDAR
+>   sensor-noise is a *bigger* bumpiness source than density, 21°→16° with LiDAR off); mesh_config
+>   lowres is a dead end (rougher); HQ over-reconstructs background → **subject isolation is the top lever**.
+> - Full detail + next-experiment matrix: `docs/DAILY_NOTES.md`, `docs/SWEEP_RESULTS.md`,
+>   `docs/EXPERIMENTS_BACKLOG.md`.
+
 ## Headline
 
 | What | Result |
@@ -129,8 +150,10 @@ StableNormal API. `sessions/` stays gitignored (data + outputs local).
   we have no reference here, so the reported figures are internal (LiDAR-vs-
   reconstruction ICP, PSNR/SSIM). A gold-standard benchmark is the validation
   step (Section 9).
-- ARKit pose drift over the orbit caps achievable surface accuracy regardless of
-  Stage 5 supervision.
+- ~~ARKit pose drift over the orbit caps achievable surface accuracy.~~ **CORRECTED (2026-07-05):**
+  pose drift is NOT the ceiling — three independent pose estimates (ARKit / seeded BA / unseeded SfM)
+  agree to ~1-2 mm. The real ~1 mm limiter is the ~12% LiDAR-vs-VIO near-field **scale** ambiguity
+  (unresolved; needs an independent ruler/known-size anchor).
 - Depth resolution (256×192 LiDAR) limits fine mesh geometry; appearance is
   driven by the high-res color.
 - Experiment B (does the normal prior help?) — the depth-only and depth+normal
