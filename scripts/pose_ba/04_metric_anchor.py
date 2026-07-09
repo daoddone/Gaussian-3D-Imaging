@@ -90,8 +90,13 @@ def vio_anchor(sess: Path, sfm_centers: dict):
     return out
 
 
-def lidar_anchor(sess: Path, imgs, pts):
-    """Robust median of (sensor depth / SfM camera-depth) over all observations (03b estimator)."""
+def lidar_anchor(sess: Path, imgs, pts, cams):
+    """Robust median of (sensor depth / SfM camera-depth) over all observations (03b estimator).
+
+    Pixel mapping color->depth uses EACH IMAGE'S OWN camera dims from the COLMAP model, NOT the
+    session-global color_resolution: mixed-resolution captures (12 MP stills + stream-res fallbacks)
+    have per-frame sizes, and a global mapping samples the wrong depth pixels (field-caught
+    2026-07-09: produced a bogus 135% 'disagreement' on the first mixed-res capture)."""
     out = {"available": False, "method": "lidar_ray_median"}
     cap_intr = sess / "capture" / "intrinsics.json"
     depth_dir = sess / "capture" / "depth"
@@ -100,9 +105,7 @@ def lidar_anchor(sess: Path, imgs, pts):
         out["note"] = "no capture depth (intrinsics.json / depth/ missing)"
         return out
     cap = json.load(open(cap_intr))
-    color_w, color_h = cap["color_resolution"]
     depth_w, depth_h = cap["depth_resolution"]
-    sx, sy = depth_w / color_w, depth_h / color_h
 
     from PIL import Image
 
@@ -119,6 +122,8 @@ def lidar_anchor(sess: Path, imgs, pts):
         dpath = depth_dir / f"{fid}.npy"
         if not dpath.exists():
             continue
+        cam = cams[img["camera_id"]]
+        sx, sy = depth_w / float(cam["width"]), depth_h / float(cam["height"])
         depth = np.load(dpath).astype(float)
         conf = load_conf(fid)
         R = C.quat_to_rotmat(img["qvec"])
@@ -182,7 +187,7 @@ def main():
 
     centers, _ = sfm_camera_centers(imgs)
     vio = vio_anchor(sess, centers)
-    lid = lidar_anchor(sess, imgs, pts)
+    lid = lidar_anchor(sess, imgs, pts, cams)
     for name, a in (("VIO", vio), ("LiDAR", lid)):
         if a["available"]:
             extra = (f"resid={a['umeyama_residual_mm']:.1f}mm frames={a['frames_used']}"

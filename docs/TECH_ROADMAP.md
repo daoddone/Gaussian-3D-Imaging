@@ -63,7 +63,7 @@ physical marker**:
    independent absolute measurement to QUANTIFY the sensor-derived scale error. NOT the scale source —
    the pipeline is markerless by design; the reference bar only measures how good the markerless scale is.
 
-**Realistic accuracy floor (from literature review): ~2–5% absolute markerless**, tightening toward the
+**MEASURED (2026-07-09, first ground-truth validation — owl + 50 mm ArUco, excited-motion capture): scale error −0.85%, median abs error 0.42 mm; VIO↔LiDAR agreement 0.9% (confidence: high). All three references (VIO, LiDAR, physical marker) converge within ~1% — beats the literature floor below.** Literature floor (for context): ~2–5% absolute markerless, tightening toward the
 low end by fusing VIO + LiDAR + temporal averaging + excited motion. This is a RELATIVE-vs-ABSOLUTE
 distinction: SfM/splat geometry is self-consistent to ~1–2 px reprojection, but absolute SURFACE accuracy
 is unvalidated until measured against a reference object. Provenance: every export records the scale
