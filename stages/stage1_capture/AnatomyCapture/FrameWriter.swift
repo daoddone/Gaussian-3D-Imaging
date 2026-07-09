@@ -18,6 +18,18 @@ final class FrameWriter: @unchecked Sendable {
     private let confDir: URL
     private let io = DispatchQueue(label: "capture.writer.io", qos: .userInitiated)
 
+    // Backpressure signal (12 MP crash fix): appends enqueued but not yet written. A 4032x3024
+    // payload holds ~45 MB in-queue and PNG-encodes slower than the ~2.7/s keyframe rate, so an
+    // unbounded backlog gets the app jetsammed on long captures — the capture sources consult
+    // this to skip the high-res still (stream-res fallback) while the writer is behind.
+    // Lock-guarded: written on the caller + io queues, read from the capture queues.
+    private let pendingLock = NSLock()
+    private var pendingCount = 0
+    var pendingAppends: Int {
+        pendingLock.lock(); defer { pendingLock.unlock() }
+        return pendingCount
+    }
+
     // Serial-queue-confined accumulators.
     private var posesJSON: [String: [String: Any]] = [:]
     private var timestamps: [String: Double] = [:]
@@ -43,7 +55,11 @@ final class FrameWriter: @unchecked Sendable {
     /// Fire-and-forget append; ordering across frames does not matter (each
     /// frame writes its own indexed files and keyed metadata).
     func append(_ p: FramePayload) {
-        io.async { self.writeFrame(p) }
+        pendingLock.lock(); pendingCount += 1; pendingLock.unlock()
+        io.async {
+            self.writeFrame(p)
+            self.pendingLock.lock(); self.pendingCount -= 1; self.pendingLock.unlock()
+        }
     }
 
     /// All-or-nothing per frame: an index ends up with rgb + depth + confidence

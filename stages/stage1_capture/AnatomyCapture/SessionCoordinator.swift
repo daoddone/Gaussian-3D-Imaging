@@ -36,6 +36,14 @@ nonisolated final class SessionCoordinator: NSObject, ARSessionDelegate, @unchec
     private var lidarOn = true
     private var highResStills = false                   // arkit4K: 12 MP still per keyframe
 
+    // 12 MP crash guards (field-tested 2026-07-09: PNG-encoding 12 MP at the ~2.7/s keyframe rate
+    // outruns disk on long captures -> unbounded writer backlog -> jetsam; a 41-frame run survived,
+    // the longer first attempt did not). Both guards degrade to the stream-res fallback frame.
+    // lastStillStart is delegate-queue confined (set at gate time, like index/selector).
+    private static let stillMinInterval: TimeInterval = 0.75   // <=1.33 stills/s (~160 over 120 s)
+    private static let stillMaxBacklog = 4                     // ~45 MB per queued 12 MP payload
+    private var lastStillStart: TimeInterval = -1e9
+
     // LiDAR-off placeholder depth dims — ARKit's LiDAR depth resolution, so the on-disk contract
     // keeps its usual [H,W] shape (FrameWriter drops any frame whose depth.count != depthW*depthH).
     private static let placeholderDepthW = 256
@@ -78,6 +86,7 @@ nonisolated final class SessionCoordinator: NSObject, ARSessionDelegate, @unchec
         index = 0
         firstKeptTime = nil
         trackingNormalThroughout = true
+        lastStillStart = -1e9
         cloud.reset()
         publishCloud()
         stillLock.lock()
@@ -217,6 +226,13 @@ nonisolated final class SessionCoordinator: NSObject, ARSessionDelegate, @unchec
     /// The ARFrame is copied out inside the completion and never escapes it.
     private func captureStillAndAppend(session: ARSession, fallback: FramePayload,
                                        writer: FrameWriter, lidarOn: Bool) {
+        // Crash guards: rate-limit still attempts + skip while the writer is behind. Either way the
+        // keyframe is kept at stream res, so a throttled run still fills the frame budget.
+        if fallback.time - lastStillStart < Self.stillMinInterval
+            || writer.pendingAppends > Self.stillMaxBacklog {
+            writer.append(fallback)
+            return
+        }
         stillLock.lock()
         let busy = stillInFlight
         if !busy { stillInFlight = true }
@@ -225,6 +241,7 @@ nonisolated final class SessionCoordinator: NSObject, ARSessionDelegate, @unchec
             writer.append(fallback)     // keep this keyframe at stream res rather than dropping it
             return
         }
+        lastStillStart = fallback.time
         session.captureHighResolutionFrame { [self] hiFrame, error in
             guard let hiFrame, error == nil,
                   let cg = PixelBufferCopy.colorCGImage(hiFrame.capturedImage,
