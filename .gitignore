@@ -49,3 +49,7 @@ swiftly.pkg
 buildServer.json
 # Bundle-adjustment tools cloned locally (hloc etc.)
 third_party/
+
+# Publisher PDFs (copyrighted reference papers) — local only, do not redistribute via GitHub
+docs/Adrian Tepole Gosain Publications/
+docs/Gaussian Splatting Papers- Measurement/

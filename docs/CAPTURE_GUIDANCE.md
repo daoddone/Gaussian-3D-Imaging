@@ -58,3 +58,23 @@ Two ways to get a capture to the Linux box:
 2. **In-app Transmit**: set the receiver **Base URL + token** in **Settings** (gear, top-left)
    first — otherwise Transmit reports "set server URL + token in Settings first". The description
    you type (setup or review screen) is now written into `metadata.json` on disk either way.
+
+---
+
+## Protocol v2 (2026-07-08) — capture rules from the quality campaign
+
+The reconstruction campaign (docs/PIPELINE_JOURNAL.md, docs/SWEEP_RESULTS.md) established that
+**capture quality decides which optimization regime pays off** — no reconstruction knob substitutes
+for a good capture. For clinical captures:
+
+1. **FILL THE FRAME with the subject.** Detail cannot exceed what the pixels sampled; the
+   fill-frame face reconstructions beat every standoff feet capture under every setting.
+2. **Capture VIDEO-DENSE, not sparse stills** — a slow continuous orbit; the pipeline picks the
+   sharpest frame per time window (blur-aware selection measurably improves surface completeness).
+3. **Keep ≥25-30 cm standoff** (LiDAR near-field bias below that corrupts the scale anchor).
+4. **Include a known-size fiducial (ruler/scale bar) in frame** — unlocks the highest-priority
+   metric anchor and the path to the ~1 mm accuracy claim.
+5. Steady orbit around the subject; cover top + sides; avoid rushing (motion blur).
+6. Either app path works: ARKit (VIO poses; simplest) or HQ-Depth (poses recovered by SfM —
+   validated 100% registration). LiDAR depth is used for SCALE ANCHORING only, never surface
+   supervision (depth_lambda 0.2 retired — it stamps sensor noise onto the mesh).

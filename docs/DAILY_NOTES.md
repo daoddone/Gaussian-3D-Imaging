@@ -1,6 +1,130 @@
 # Daily notes
 
-Running engineering journal. **Newest entry on top.** Purpose: capture each day's decisions,
+Running engineering journal. **Newest entry on top.**
+
+---
+
+## 2026-07-09 — Deliverables layer: sharp mesh appearance, OBJ export for FEA, capture-app upgrade, collaborator-spec verification
+
+Focus shifted from "reconstruction quality" (settled 07-08) to **making the outputs usable downstream**
+and **preparing the next capture round**. All decisions below have rationales; see also
+PIPELINE_RECOMMENDATION.md, MESH_EXPORT_SPEC.md, CAPTURE_PROTOCOL_V2.md, CAPTURE_MODES_FINDINGS.md.
+
+**Mesh appearance ("cartoonish" fix).** MILo bakes ONE diffuse color/vertex AVERAGED over all views →
+blur. Built `scripts/bake_mesh_colors.py`: color each vertex/texel from the source frames by
+ORTHOGONALITY to the surface normal (owner insight: a frontal camera is wrong for a curved side; the
+best view looks down the local normal), hard-excluding grazing views, then MEDIAN-reject outliers
+(shadow/specular/misregistered) and weighted-average the near-orthogonal inliers (adaptive cone: widen
+only where near-orthogonal views are sparse). Rationale: keeps sharpness of few-best-views while being
+poison-resistant. Validated on feet+face, no regression.
+
+**v2 OBJ exporter** (`scripts/export_mesh_obj.py`): clean→largest-component→decimate(~200k tris,
+FEA-mesher-ready)→xatlas UV→per-texel texture bake (same robust sampler; base layer = barycentric
+vertex color so no black texels where a view can't see)→OBJ+MTL+PNG in **mm** + full-res metric PLY +
+scale-provenance sidecar. Rationale: the downstream collaborator's analysis ingests OBJ triangulated
+surfaces; PLY vertex-colors aren't standard OBJ appearance. Fixed two bugs live (black texels; xatlas
+API field names). Loads valid (edge-manifold, UVs, texture) in a MeshLab-style reader.
+
+**Flatness prior** (`--flatness_lambda`, edge-aware depth 2nd-difference weighted exp(-β|∇I|)): smooths
+only textureless regions (the table wobble), leaving textured surfaces untouched. **Found + fixed a real
+bug**: the mask gate was INVERTED (would have smoothed the subject and spared the background). Now
+hard-protects the subject region (applies only outside the subject mask) + the texture-gate as a second
+guard. STATUS: built, NOT yet A/B-verified → BACKLOGGED (see 07-09 decision below).
+
+**Capture app upgrade.** Verified (multi-agent + adversarial) the ARKit capabilities: (a) 4K-stream and
+LiDAR are NOT mutually exclusive — the stream tops at 1440p on Pro, and true high-res is 12 MP stills
+via `captureHighResolutionFrame()` WHILE LiDAR/tracking keep running; (b) markerless absolute-scale
+floor is ~2-5% (VIO-primary immune to LiDAR near-field bias; excited "figure-eight" motion ~halves VIO
+error), so a physical ruler is demoted to VALIDATION-only. **Shipped:** configurable frame cap raised
+60→360 frames / 20→120 s (KeyframeSelector+CaptureTuning+Settings; safety-stop+progress kept in sync) —
+the one change that unblocks the strong-capture branch, low-risk config only. **Deferred (needs
+on-device test):** 12 MP high-res-stills mode. **Not needed:** a LiDAR-off toggle — markerless is
+testable server-side by ignoring the captured depth (no app change).
+
+**Collaborator-spec verification.** Read the 4 collaborator papers (in docs/); multi-agent extraction +
+ADVERSARIAL verification caught several unsupported numbers in the earlier MESH_EXPORT_SPEC (a
+fabricated "1.05-1.79 mm" range, a "23k-58k hex" range, "pigs get scale from the grid" — actually the
+ruler). Corrected. Key confirmed facts: their reference device is a single-shot 2-image stereo unit
+(factory-metric, so THEY need no ruler; their MVS papers DO use a ruler at 0.6-2%); they lack dense
+correspondence in the human case (grid is porcine-only) and are limited to overall distance+area — the
+gap our dense texture could fill (UNPROVEN). Our many-view reconstruction genuinely exceeds a 2-image
+stereo on coverage (hypothesis to demonstrate on the reference-scan day).
+
+**Prior-art check (metric-from-splats).** Confirmed we ALREADY integrated the feed-forward metric-geometry
+family: DA3 (chosen frontend, metric, pose-conditionable) + MapAnything (metric cross-check). The
+campaign demoted DA3 to fallback (its metric is a learned prior, few-% off, no better than sensor
+anchors). So the DUSt3R→MASt3R→MapAnything→DA3 lineage is known/settled; new-paper review (in flight)
+is scoped to whether anything BEATS a LiDAR+VIO anchor on a LiDAR device (expected: no, for our case).
+
+**DECISION — backlog SAM2 + flatness until capture/metric are resolved.** Rationale: (1) both are
+REFINEMENTS, not core; the geometric mask already works adequately and the flatness prior is unproven;
+(2) the high-value open work is capture methods + markerless metric, which must be validated first;
+(3) sequencing them later keeps the near-term task list purely technical (helps the planned agent-tier
+change). The metric plan (LiDAR ray-lock + VIO-primary + 4K stills + ruler-QA) does not need either.
+
+## 2026-07-08 — Quality campaign: the capacity law, subject isolation, and the second nvdiffrast bug
+
+Owner mandate: run the pipeline at full capacity ("as originally intended"), autonomously overnight.
+Full record in PIPELINE_JOURNAL.md + SWEEP_RESULTS.md; rationale summary here.
+
+**Root-cause discovery that reframed everything: the invisible "fast" schedule.** Every MILo run in the
+repo's history had silently used the upstream-default accelerated schedule (`configs/fast`: densify
+stops at iter 3,000 → tiny gaussian budgets). So EVERY prior verdict was measured under a
+capacity-starved envelope. Fix: provenance now stamps `milo_schedule`; added `configs/quality` and
+`configs/quality_mid` (the A6000-feasible full-capacity point). Also fixed the coupled bug that the
+renderer switch (`regularization_from_iter`) must equal `densify_until_iter`, and the extraction
+`--iteration` default (18000) that failed 30k runs.
+
+**Second nvdiffrast bug (the R2' crash).** At full capacity the feet mesh exceeded nvdiffrast's
+16.7M-triangle (2^24) limit → CUDA-700 in `triangleSetupKernel`; then even the scalable renderer hit a
+"subtriangle count overflow" (density within one 2^24 chunk). Fix: `use_scalable_renderer:true` +
+`max_triangles_in_batch 2^24→2^22`. Diagnosed via the checkpoint-resume + choke-point-instrumentation
+method (each hypothesis test ~3 min, not 2.5 h). Validated 1,700+ iters past the crash.
+
+**Process failure + fix.** A manual pause for the crash diagnosis + a session disconnect left the GPU
+idle all night (no dead-man resume). New rule (JOURNAL §8.9): any pause of the autonomous runner must
+schedule its own bounded auto-resume BEFORE diagnosis. Applied — the matrix then completed autonomously.
+
+**THE CENTRAL FINDING — the capacity law.** The 2×2 (ARKit/HQ × λ0.2/λ0) at full capacity FALSIFIED the
+prediction that "λ0-at-capacity wins." At capacity the depth-term effect shrinks to ~2°, and CAPACITY
+itself dominates roughness: on WEAK captures (standoff feet, ≤57 frames) added capacity fits junk
+regardless of λ (feet qualmid ≈33° both λ), while on STRONG captures (fill-frame face) capacity adds
+real detail (+27-47% verts, true stubble relief). **Law: capacity must match input quality.** Fast+λ0
+remained the feet optimum (14.5-15.8°, visible toes — owner-validated). So the pipeline has an
+INPUT-QUALITY BRANCH and the capture protocol is the true centerpiece.
+
+**Subject isolation — adopted (first-try win).** Photometric-loss mask (geometric: optical-axis center
++ metric cluster + projected hull) + out-of-mask opacity penalty. Result: floater extent −58%,
+roughness unchanged, subject intact. Replaces LiDAR's incidental free-space-suppression role that λ0 lost.
+
+## 2026-07-07 — Depth-free face baseline (owner-requested): clean result, reshapes the LiDAR question
+
+Owner context: a pre-pipeline preliminary run (face photos → plain COLMAP SfM → MILo, no depth, no
+dense, no DA3) was visibly CLEANER than our current outputs. Owner asked to reproduce that input
+condition through the upgraded MILo as the depth-free arm — photos in `sessions/Previous face photos`
+(3,258 full-fps Record3D JPGs, 1440×1920; the preliminary used a 169-frame sample; old recipe:
+`scripts/run_pycolmap_from_record3d.py`).
+
+**Run** (`scripts/face_depthfree_test.py`, results in SWEEP_RESULTS.md): 172 frames stride-19; pycolmap
+PINHOLE + BA-refined focal (no metadata.json in folder → init fx 1367 from device-K scaling, refined to
+1496), sequential matcher → **172/172 @ 0.79 px**. MILo: mesh reg ON, -r1 (1920 < 2048 cap),
+depth_lambda **0**, dense **off** → 57.7k gaussians, 819k-vert mesh, **roughness 10.13° (best ever)**,
+facial features legible in the mesh (eyes/brows/nose/cap buckle). Gauge-free = non-metric by design.
+
+**Conclusions (with the owner's two standing conclusions):**
+1. Poses are NOT the problem (again confirmed — 0.79 px from scratch).
+2. The depth-free path through current MILo is clean → consistent with the LiDAR-surface-supervision
+   diagnosis (the controlled term-isolation evidence stays the feet A/B: 21.1°→15.8°).
+3. **DA3 is not required for reconstruction** — COLMAP sparse init suffices for MILo.
+4. Honest confound: the face capture also FILLS THE FRAME (the pixel-coverage detail lever) and has
+   3× the views — this test validates the path, it does not isolate the depth term.
+
+**Shaping the improvement decision (owner will steer):** candidate architecture = **LiDAR as SCALE
+ANCHOR only** (global, surface-neutral — 03b_relock proved a 1% MAD lock) + **photometric/mesh-reg for
+the surface** (depth_lambda 0 or very low). Next controlled tests: depth_lambda {0.05, 0.1} on the feet;
+HQ feet depth_lambda-0 (SfM poses already in place); subject isolation; fill-frame re-capture remains
+the true detail lever. DA3's role shrinks to fallback (degenerate/low-texture captures where SfM fails).
+Eval harness now durable at `scripts/eval_recon.py` (scratchpad copy was lost to session cleanup). Purpose: capture each day's decisions,
 findings, and live experiment state so context survives resets. The durable references stay in
 `RESULTS.md`, `EXPERIMENTS_BACKLOG.md`, `MILO_PLAN.md`, `POSE_BA_PLAN.md`, `COMPONENT_IO_REFERENCE.md`,
 `00_BUILD_SPECIFICATION.md`; this file is the "what happened / where we are" log.

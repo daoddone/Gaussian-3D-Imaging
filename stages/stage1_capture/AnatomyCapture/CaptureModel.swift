@@ -15,7 +15,8 @@ import Observation
 ///   • HQ-Depth: `AVFoundationCaptureSource` (owns its own AVCaptureSession); raw absolute LiDAR
 ///     depth + high-res color, NO pose (pipeline recovers pose via unseeded SfM).
 /// Both feed the same `FrameWriter`. Only one may own the rear camera at a time, so switching
-/// backends pauses/stops the other (see `setBackend`).
+/// backends pauses/stops the other (see `setMode`). The user-facing selector is the T4
+/// capture-mode matrix {arkit1080, arkit4K, hqStills} x {LiDAR on/off}; `backend` is derived.
 @MainActor
 @Observable
 final class CaptureModel {
@@ -37,7 +38,12 @@ final class CaptureModel {
     var exportURL: URL?
 
     // Toggles + metadata (bindable from the UI; only mutate when not recording).
-    var backend: CaptureBackend = .arkit
+    // The capture-mode matrix (T4): {arkit1080, arkit4K, hqStills} x {LiDAR on/off}. Defaults
+    // reproduce the pre-T4 behavior exactly (arkit1080 + LiDAR on). `backend` is DERIVED so all
+    // existing preview/UI reads keep working; mutate via setMode/setLidarEnabled only.
+    var captureMode: CaptureMode = .arkit1080
+    var lidarEnabled: Bool = true
+    var backend: CaptureBackend { captureMode.backend }
     var orientation: CaptureOrientation = .portrait
     var captureDescription: String = ""
     var uploadMessage: String = ""
@@ -79,7 +85,10 @@ final class CaptureModel {
     private var zipTask: Task<Void, Never>?   // the in-flight zip (finalize or transmit); serialized
     private var isPreparingUpload = false     // synchronous re-entrancy guard for transmit()
 
-    let budgetSeconds: TimeInterval = 20
+    // Computed from CaptureTuning so the safety-stop backstop + UI progress ALWAYS match the
+    // KeyframeSelector's budget (which reads the same source). Changing it stored would let the
+    // three drift apart. Default 120 s (was 20 s) — the strong-capture branch needs the longer orbit.
+    var budgetSeconds: TimeInterval { CaptureTuning.budgetSeconds }
 
     /// Path B source (lazily created; owns its own AVCaptureSession).
     @ObservationIgnored
@@ -130,19 +139,31 @@ final class CaptureModel {
         let cfg = ARWorldTrackingConfiguration()
         cfg.worldAlignment = .gravity
         cfg.isAutoFocusEnabled = true            // explicit: ARKit autofocuses; per-frame K tracks it
-        if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
-            cfg.frameSemantics = [.smoothedSceneDepth]
-            coordinator.depthMode = "smoothedSceneDepth"
-        } else if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
-            cfg.frameSemantics = [.sceneDepth]
-            coordinator.depthMode = "sceneDepth"
+        // LiDAR gate (T4): with the toggle OFF, no depth semantics and no scene mesh — VIO pose
+        // still runs, the capture saves RGB+pose+K with an all-NaN depth placeholder.
+        if lidarEnabled {
+            if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
+                cfg.frameSemantics = [.smoothedSceneDepth]
+                coordinator.depthMode = "smoothedSceneDepth"
+            } else if ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth) {
+                cfg.frameSemantics = [.sceneDepth]
+                coordinator.depthMode = "sceneDepth"
+            }
+            // Live coverage overlay: ARKit fuses LiDAR into a world mesh on-device (free). The
+            // ARView renders it (showSceneUnderstanding) so the clinician sees covered vs missing
+            // regions live and can dwell on thin areas (wound bed / medial arm). Feedback only —
+            // NOT written to the capture. Also snapshotted post-record for the 3D inspector.
+            if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
+                cfg.sceneReconstruction = .mesh
+            }
         }
-        // Live coverage overlay: ARKit fuses LiDAR into a world mesh on-device (free). The
-        // ARView renders it (showSceneUnderstanding) so the clinician sees covered vs missing
-        // regions live and can dwell on thin areas (wound bed / medial arm). Feedback only —
-        // NOT written to the capture. Also snapshotted post-record for the 3D inspector.
-        if ARWorldTrackingConfiguration.supportsSceneReconstruction(.mesh) {
-            cfg.sceneReconstruction = .mesh
+        // arkit4K: run the recommended high-res-still stream format (~1440p@60, keeps per-frame
+        // sceneDepth registered) — the actual 12 MP gain comes from captureHighResolutionFrame on
+        // each keyframe (SessionCoordinator). Do NOT use recommendedVideoFormatFor4KResolution
+        // (30 fps, undocumented with depth).
+        if captureMode == .arkit4K,
+           let fmt = ARWorldTrackingConfiguration.recommendedVideoFormatForHighResolutionFrameCapturing {
+            cfg.videoFormat = fmt
         }
         return cfg
     }
@@ -165,19 +186,37 @@ final class CaptureModel {
         (session?.currentFrame?.anchors ?? []).compactMap { $0 as? ARMeshAnchor }
     }
 
-    /// Switch capture framework (allowed only in idle/previewing). Tears down the outgoing
-    /// backend's session so only one owns the camera; the SwiftUI preview swap starts the new one.
-    func setBackend(_ b: CaptureBackend) {
-        guard b != backend, phase == .idle || phase == .previewing else { return }
-        // Tear the outgoing session down BEFORE flipping backend, so the incoming session doesn't
-        // start while the other still owns the rear camera (black/frozen preview, interruption).
-        switch backend {
-        case .arkit:    session?.pause()
-        case .hqDepth:  avSource.stopPreviewAndWait()    // synchronous: camera released before ARKit runs
+    /// Switch capture mode (allowed only in idle/previewing). If the mode changes the underlying
+    /// backend, tears down the outgoing backend's session so only one owns the camera; the SwiftUI
+    /// preview swap starts the new one. If only the ARKit resolution flavor changed
+    /// (arkit1080 <-> arkit4K), the same session is just re-run with the new videoFormat.
+    func setMode(_ m: CaptureMode) {
+        guard m != captureMode, phase == .idle || phase == .previewing else { return }
+        if m.backend != captureMode.backend {
+            // Tear the outgoing session down BEFORE flipping mode, so the incoming session doesn't
+            // start while the other still owns the rear camera (black/frozen preview, interruption).
+            switch backend {
+            case .arkit:    session?.pause()
+            case .hqDepth:  avSource.stopPreviewAndWait()    // synchronous: camera released before ARKit runs
+            }
+            captureMode = m
+            trackingMessage = ""
+            if m.backend == .hqDepth { focusLocked = false } // fresh HQ config comes up in continuous AF
+        } else {
+            captureMode = m
+            if backend == .arkit { runConfiguration() }      // same owner, new videoFormat
         }
-        backend = b
-        trackingMessage = ""
-        if b == .hqDepth { focusLocked = false }     // fresh HQ config comes up in continuous AF
+    }
+
+    /// Toggle LiDAR depth recording (allowed only in idle/previewing). OFF: the capture still saves
+    /// RGB + VIO pose + K (providesPose stays true for ARKit), with all-NaN placeholder depth.
+    /// ARKit re-runs its configuration without depth semantics / scene mesh; the HQ session keeps
+    /// its depth stream for sync + intrinsics but writes placeholders (see AVFoundationCaptureSource).
+    func setLidarEnabled(_ on: Bool) {
+        guard on != lidarEnabled, phase == .idle || phase == .previewing else { return }
+        lidarEnabled = on
+        validDepthFraction = 0                              // stale preview readout
+        if backend == .arkit { runConfiguration() }
     }
 
     // MARK: - recording
@@ -193,12 +232,18 @@ final class CaptureModel {
             frameCount = 0; elapsed = 0; validDepthFraction = 0
             recordStartedAt = Date()
             phase = .recording
+            // Freeze the mode flags for this recording as Sendable copies (read here on the
+            // MainActor, handed to the queue-confined coordinators via startWriting).
+            let lidar = lidarEnabled
+            let hiResStills = captureMode == .arkit4K
             switch backend {
             case .arkit:
                 resetSceneMesh()             // start the coverage mesh fresh at record (drop pre-record geometry)
-                delegateQueue.async { [coordinator] in coordinator.startWriting(writer: w) }
+                delegateQueue.async { [coordinator] in
+                    coordinator.startWriting(writer: w, lidarEnabled: lidar, highResStills: hiResStills)
+                }
             case .hqDepth:
-                avSource.startWriting(writer: w)
+                avSource.startWriting(writer: w, lidarEnabled: lidar)
             }
             safetyStop = Task { [weak self] in
                 try? await Task.sleep(nanoseconds: UInt64((self?.budgetSeconds ?? 20) + 1) * 1_000_000_000)
@@ -250,24 +295,40 @@ final class CaptureModel {
             meshNode = nil
         }
 
+        // Depth provenance: with the LiDAR toggle OFF no depth was recorded — the .npy files are
+        // all-NaN placeholders (mask all-255) so the on-disk contract shape is unchanged.
+        let depthSource: String
+        if !lidarEnabled {
+            depthSource = "none (RGB only)"
+        } else if backend == .arkit {
+            depthSource = "ARKit \(coordinator.depthMode) (LiDAR, temporally processed)"
+        } else {
+            depthSource = "AVFoundation builtInLiDARDepthCamera (raw, absolute, unfiltered)"
+        }
         let meta = CaptureMetadata(
             sessionID: sessionID,
             description: captureDescription,
             backend: backend,
+            captureMode: captureMode,
+            lidarEnabled: lidarEnabled,
             orientation: orientation,
             capturedAt: recordStartedAt,
             finalizedAt: Date(),
             frameCount: 0,                       // overwritten by writer with the authoritative count
-            providesPose: backend.providesPose,
-            depthSource: backend == .arkit
-                ? "ARKit \(coordinator.depthMode) (LiDAR, temporally processed)"
-                : "AVFoundation builtInLiDARDepthCamera (raw, absolute, unfiltered)",
+            providesPose: backend.providesPose,  // ARKit stays true with LiDAR off (VIO pose survives)
+            depthSource: depthSource,
+            hqStillsFallback: captureMode == .hqStills && avSource.stillsFallbackActive(),
             deviceModel: UIDevice.current.model,
             systemVersion: UIDevice.current.systemVersion,
             appVersion: (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String) ?? "?")
-        let confidenceNote = backend == .arkit
-            ? "depth valid (255) where ARConfidenceLevel >= medium; else NaN / 0."
-            : "no per-pixel confidence; depth valid where finite (>0); holes = NaN / 0."
+        let confidenceNote: String
+        if !lidarEnabled {
+            confidenceNote = "LiDAR disabled: depth is an all-NaN placeholder; mask all-255 (no depth confidence)."
+        } else if backend == .arkit {
+            confidenceNote = "depth valid (255) where ARConfidenceLevel >= medium; else NaN / 0."
+        } else {
+            confidenceNote = "no per-pixel confidence; depth valid where finite (>0); holes = NaN / 0."
+        }
 
         let result = await w.finalize(metadata: meta,
                                       trackingWasNormalThroughout: trackingNormal,
@@ -362,9 +423,10 @@ final class CaptureModel {
     func note(tracking: String) { trackingMessage = tracking }
 
     /// Live preview valid-depth (framing aid, both backends). Only updates outside recording —
-    /// the recording path uses note(frameCount:elapsed:validFraction:).
+    /// the recording path uses note(frameCount:elapsed:validFraction:). Suppressed with LiDAR off
+    /// (the HQ session still streams depth for sync/intrinsics, but none of it will be recorded).
     func notePreview(validFraction: Double) {
-        guard phase == .previewing || phase == .idle else { return }
+        guard phase == .previewing || phase == .idle, lidarEnabled else { return }
         validDepthFraction = validFraction
     }
 

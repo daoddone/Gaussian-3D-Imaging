@@ -128,14 +128,25 @@ struct CaptureView: View {
         .background(.black.opacity(0.35), in: RoundedRectangle(cornerRadius: 10))
     }
 
-    /// Framework + orientation toggles + description, shown before recording (locked during).
+    /// Capture-mode matrix + LiDAR toggle + description, shown before recording (locked during).
     private var setupControls: some View {
         VStack(spacing: 8) {
-            Picker("Framework", selection: Binding(
-                get: { model.backend },
-                set: { model.setBackend($0) })) {
-                ForEach(CaptureBackend.allCases, id: \.self) { Text($0.uiLabel).tag($0) }
+            // T4 capture-mode matrix: {ARKit 1080, ARKit 4K, HQ Stills}. setMode() handles the
+            // backend teardown/swap when needed; the preview branches on the derived model.backend.
+            Picker("Capture mode", selection: Binding(
+                get: { model.captureMode },
+                set: { model.setMode($0) })) {
+                ForEach(CaptureMode.allCases, id: \.self) { Text($0.uiLabel).tag($0) }
             }.pickerStyle(.segmented)
+
+            // LiDAR gate: OFF still records RGB + (ARKit) VIO pose + K; depth files become
+            // all-NaN placeholders — the markerless VIO-scale-only experiment leg.
+            Toggle(isOn: Binding(
+                get: { model.lidarEnabled },
+                set: { model.setLidarEnabled($0) })) {
+                Text("LiDAR depth").font(.caption).foregroundStyle(.white)
+            }
+            .tint(.green)
 
             // Framing orientation is auto-detected from how the phone is held at record time
             // (the UI now rotates freely); no manual picker needed. Saved data stays sensor-native.

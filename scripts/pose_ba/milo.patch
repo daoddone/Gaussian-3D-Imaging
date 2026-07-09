@@ -1,7 +1,316 @@
+diff --git a/milo/configs/mesh/quality.yaml b/milo/configs/mesh/quality.yaml
+new file mode 100644
+index 0000000..7d6ceb2
+--- /dev/null
++++ b/milo/configs/mesh/quality.yaml
+@@ -0,0 +1,62 @@
++# Regularization schedule
++start_iter: 20_001
++mesh_update_interval: 1 
++stop_iter: 30000
++
++# Depth loss weight
++use_depth_loss: true
++depth_weight: 0.05  # 0.05
++depth_ratio: 1.0  # 0.6 
++mesh_depth_loss_type: "log"  # "log"
++
++# Normal loss weight
++use_normal_loss: true  # true
++normal_weight: 0.05  # 0.05
++use_depth_normal: true  # true
++
++# Delaunay computation
++delaunay_reset_interval: 500  # 500
++n_max_points_in_delaunay: 5_400_000  # -1 for no limit
++delaunay_sampling_method: "surface"  # "random", "surface" or "surface+opacity"
++filter_large_edges: true  # true or false?
++collapse_large_edges: false  # true or false?
++
++# Rasterization
++use_scalable_renderer: true   # feet@capacity meshes >16.7M faces (2^24 nvdiffrast limit) -> chunked renderer (root cause #7)
++
++# SDF computation
++sdf_reset_interval: 500  # 500
++sdf_default_isosurface: 0.5  # 0.5
++transform_sdf_to_linear_space: false  # SHOULD BE FALSE
++min_occupancy_value: 0.0000000001  # 0.0000000001
++
++#   > For Integrate
++use_ema: true  # true
++alpha_ema: 0.4  # 0.4
++
++#   > For TSDF
++trunc_margin: 0.002  # 0.002
++
++#   > For learnable
++occupancy_mode: "occupancy_shift"  # "occupancy_shift" or "density_shift"
++#       > Gaussian centers regularization
++enforce_occupied_centers: true  # true
++occupied_centers_weight: 0.005  # 0.005
++#       > Occupancy labels loss
++use_occupancy_labels_loss: true  # true or false?
++reset_occupancy_labels_every: 200  # 200
++occupancy_labels_loss_weight: 0.005  # 0.005
++#       > SDF reset
++fix_set_of_learnable_sdfs: true  # false or true?
++learnable_sdf_reset_mode: "ema"  # "none" or "ema"
++learnable_sdf_reset_stop_iter: 25_001
++learnable_sdf_reset_alpha_ema: 0.4  # 0.4
++
++method_to_reset_sdf: "depth_fusion"  # "integration" or "depth_fusion"
++n_binary_steps_to_reset_sdf: 0  # Use 0 to disable binary search
++sdf_reset_linearization_n_steps: 20
++sdf_reset_linearization_enforce_std: 0.5  # 0.5
++depth_fusion_reset_tolerance: 0.1
++
++# Foreground Culling
++radius_culling: -1.0  # -1.0 for no culling
+\ No newline at end of file
+diff --git a/milo/configs/mesh/quality_mid.yaml b/milo/configs/mesh/quality_mid.yaml
+new file mode 100644
+index 0000000..74e9290
+--- /dev/null
++++ b/milo/configs/mesh/quality_mid.yaml
+@@ -0,0 +1,62 @@
++# Regularization schedule
++start_iter: 12_001
++mesh_update_interval: 1 
++stop_iter: 22000
++
++# Depth loss weight
++use_depth_loss: true
++depth_weight: 0.05  # 0.05
++depth_ratio: 1.0  # 0.6 
++mesh_depth_loss_type: "log"  # "log"
++
++# Normal loss weight
++use_normal_loss: true  # true
++normal_weight: 0.05  # 0.05
++use_depth_normal: true  # true
++
++# Delaunay computation
++delaunay_reset_interval: 500  # 500
++n_max_points_in_delaunay: 5_400_000  # -1 for no limit
++delaunay_sampling_method: "surface"  # "random", "surface" or "surface+opacity"
++filter_large_edges: true  # true or false?
++collapse_large_edges: false  # true or false?
++
++# Rasterization
++use_scalable_renderer: true   # feet@capacity meshes >16.7M faces (2^24 nvdiffrast limit) -> chunked renderer (root cause #7)
++
++# SDF computation
++sdf_reset_interval: 500  # 500
++sdf_default_isosurface: 0.5  # 0.5
++transform_sdf_to_linear_space: false  # SHOULD BE FALSE
++min_occupancy_value: 0.0000000001  # 0.0000000001
++
++#   > For Integrate
++use_ema: true  # true
++alpha_ema: 0.4  # 0.4
++
++#   > For TSDF
++trunc_margin: 0.002  # 0.002
++
++#   > For learnable
++occupancy_mode: "occupancy_shift"  # "occupancy_shift" or "density_shift"
++#       > Gaussian centers regularization
++enforce_occupied_centers: true  # true
++occupied_centers_weight: 0.005  # 0.005
++#       > Occupancy labels loss
++use_occupancy_labels_loss: true  # true or false?
++reset_occupancy_labels_every: 200  # 200
++occupancy_labels_loss_weight: 0.005  # 0.005
++#       > SDF reset
++fix_set_of_learnable_sdfs: true  # false or true?
++learnable_sdf_reset_mode: "ema"  # "none" or "ema"
++learnable_sdf_reset_stop_iter: 17_001
++learnable_sdf_reset_alpha_ema: 0.4  # 0.4
++
++method_to_reset_sdf: "depth_fusion"  # "integration" or "depth_fusion"
++n_binary_steps_to_reset_sdf: 0  # Use 0 to disable binary search
++sdf_reset_linearization_n_steps: 20
++sdf_reset_linearization_enforce_std: 0.5  # 0.5
++depth_fusion_reset_tolerance: 0.1
++
++# Foreground Culling
++radius_culling: -1.0  # -1.0 for no culling
+\ No newline at end of file
+diff --git a/milo/configs/quality b/milo/configs/quality
+new file mode 100644
+index 0000000..066c6d9
+--- /dev/null
++++ b/milo/configs/quality
+@@ -0,0 +1 @@
++Namespace(iterations=30_000, densify_until_iter=15_000, aggressive_clone_from_iter=500, aggressive_clone_interval=250, warn_until_iter=3_000, depth_reinit_iter=2_000, simp_iteration1=15_000, simp_iteration2=20_000, regularization_from_iter=15_000, checkpoint_iterations=[8_000, 20_000])
+diff --git a/milo/configs/quality_mid b/milo/configs/quality_mid
+new file mode 100644
+index 0000000..520e5a4
+--- /dev/null
++++ b/milo/configs/quality_mid
+@@ -0,0 +1 @@
++Namespace(iterations=22_000, densify_until_iter=8_000, aggressive_clone_from_iter=500, aggressive_clone_interval=250, warn_until_iter=3_000, depth_reinit_iter=2_000, simp_iteration1=8_000, simp_iteration2=12_000, regularization_from_iter=8_000, checkpoint_iterations=[8_000, 12_000])
+diff --git a/milo/scene/gaussian_model.py b/milo/scene/gaussian_model.py
+index e6421f8..94b4218 100644
+--- a/milo/scene/gaussian_model.py
++++ b/milo/scene/gaussian_model.py
+@@ -31,6 +31,14 @@ except:
+     pass
+ from torch.optim import Adam
+ 
++# clinical-pipeline knob (task T8): retention percentile for the importance-distillation passes.
++# Default 0.99 (+ the built-in 10x-tighter 0.999 refinement passes derived from it) == stock MILo.
++# Raising it (e.g. 0.995) keeps MORE gaussians through simp1/simp2 -> denser final model/mesh —
++# the DIRECT final-count control (schedule length does NOT control final count; distillation does).
++# Set via train.py --simp_retention.
++SIMP_RETENTION = 0.99
++
++
+ def init_cdf_mask(importance, thres=1.0):
+     importance = importance.flatten()   
+     if thres!=1.0:
+@@ -1179,7 +1187,7 @@ class GaussianModel:
+                 imp_score=imp_score+accum_weights
+             
+         imp_score[accum_area_max==0]=0
+-        non_prune_mask = init_cdf_mask(importance=imp_score, thres=0.99) 
++        non_prune_mask = init_cdf_mask(importance=imp_score, thres=SIMP_RETENTION) 
+         self.prune_points(non_prune_mask==False)
+ 
+         return self._xyz, SH2RGB(self._features_dc+0)[:,0]
+@@ -1195,7 +1203,7 @@ class GaussianModel:
+ 
+             imp_score=imp_score+accum_weights
+             
+-        non_prune_mask = init_cdf_mask(importance=imp_score, thres=0.99) 
++        non_prune_mask = init_cdf_mask(importance=imp_score, thres=SIMP_RETENTION) 
+         self.prune_points(non_prune_mask==False)
+ 
+         return self._xyz, SH2RGB(self._features_dc+0)[:,0]
+@@ -1217,7 +1225,7 @@ class GaussianModel:
+             render_pkg = render_simp(view, self, pipe, background, culling=self._culling[:,view.uid])
+             accum_weights = render_pkg["accum_weights"]
+ 
+-            non_prune_mask = init_cdf_mask(importance=accum_weights, thres=0.99)
++            non_prune_mask = init_cdf_mask(importance=accum_weights, thres=SIMP_RETENTION)
+ 
+             self._culling[:,view.uid]=(non_prune_mask==False)
+ 
+@@ -1226,7 +1234,7 @@ class GaussianModel:
+ 
+             imp_score=imp_score+accum_weights
+ 
+-        non_prune_mask = init_cdf_mask(importance=imp_score, thres=0.999) 
++        non_prune_mask = init_cdf_mask(importance=imp_score, thres=1.0 - (1.0 - SIMP_RETENTION) / 10.0) 
+ 
+         self.factor_culling=count_vis/(count_rad+1e-1)
+ 
+@@ -1251,11 +1259,11 @@ class GaussianModel:
+             imp_score=imp_score+accum_weights
+             accum_area_max = accum_area_max+area_max
+ 
+-        non_prune_mask = init_cdf_mask(importance=imp_score, thres=0.999) 
++        non_prune_mask = init_cdf_mask(importance=imp_score, thres=1.0 - (1.0 - SIMP_RETENTION) / 10.0) 
+         self.prune_points(~non_prune_mask) 
+ 
+         imp_score[accum_area_max==0]=0
+-        intersection_pts_mask = init_cdf_mask(importance=imp_score, thres=0.99)
++        intersection_pts_mask = init_cdf_mask(importance=imp_score, thres=SIMP_RETENTION)
+         intersection_pts_mask=intersection_pts_mask[non_prune_mask]
+         self.clone(intersection_pts_mask)
+ 
+@@ -1282,21 +1290,21 @@ class GaussianModel:
+             imp_score=imp_score+accum_weights
+             accum_area_max = accum_area_max+area_max
+ 
+-            visibility_mask = init_cdf_mask(importance=accum_weights, thres=0.99)
++            visibility_mask = init_cdf_mask(importance=accum_weights, thres=SIMP_RETENTION)
+             self._culling[:,view.uid]=(visibility_mask==False)
+             count_rad[render_pkg["radii"]>0] += 1
+             count_vis[visibility_mask] += 1
+ 
+         self.factor_culling=count_vis/(count_rad+1e-1)
+ 
+-        non_prune_mask = init_cdf_mask(importance=imp_score, thres=0.999) 
++        non_prune_mask = init_cdf_mask(importance=imp_score, thres=1.0 - (1.0 - SIMP_RETENTION) / 10.0) 
+         prune_mask = (count_vis<=1)[:,0]
+         prune_mask = torch.logical_or(prune_mask, non_prune_mask==False)
+         self.prune_points(prune_mask) 
+ 
+ 
+         imp_score[accum_area_max==0]=0
+-        intersection_pts_mask = init_cdf_mask(importance=imp_score, thres=0.99)
++        intersection_pts_mask = init_cdf_mask(importance=imp_score, thres=SIMP_RETENTION)
+ 
+         intersection_pts_mask=intersection_pts_mask[~prune_mask]
+         self.clone(intersection_pts_mask)
+@@ -1370,7 +1378,7 @@ class GaussianModel:
+             else:
+                 imp_score=imp_score+accum_weights            
+ 
+-            non_prune_mask = init_cdf_mask(importance=accum_weights, thres=0.99)
++            non_prune_mask = init_cdf_mask(importance=accum_weights, thres=SIMP_RETENTION)
+ 
+             self._culling[:,view.uid]=(non_prune_mask==False)
+ 
+@@ -1379,7 +1387,7 @@ class GaussianModel:
+ 
+ 
+         imp_score[accum_area_max==0]=0
+-        non_prune_mask = init_cdf_mask(importance=imp_score, thres=0.99) 
++        non_prune_mask = init_cdf_mask(importance=imp_score, thres=SIMP_RETENTION) 
+ 
+         self.factor_culling=count_vis/(count_rad+1e-1)
+ 
+@@ -1416,7 +1424,7 @@ class GaussianModel:
+             else:
+                 imp_score=imp_score+accum_weights
+ 
+-            non_prune_mask = init_cdf_mask(importance=accum_weights, thres=0.99)
++            non_prune_mask = init_cdf_mask(importance=accum_weights, thres=SIMP_RETENTION)
+ 
+             self._culling[:,view.uid]=(non_prune_mask==False)
+ 
+@@ -1462,7 +1470,7 @@ class GaussianModel:
+ 
+             imp_score=imp_score+accum_weights      
+ 
+-            non_prune_mask = init_cdf_mask(importance=accum_weights, thres=0.99)
++            non_prune_mask = init_cdf_mask(importance=accum_weights, thres=SIMP_RETENTION)
+ 
+             self._culling[:,view.uid]=(non_prune_mask==False)
+ 
+@@ -1470,7 +1478,7 @@ class GaussianModel:
+             count_vis[non_prune_mask] += 1
+ 
+ 
+-        non_prune_mask = init_cdf_mask(importance=imp_score, thres=0.99) 
++        non_prune_mask = init_cdf_mask(importance=imp_score, thres=SIMP_RETENTION) 
+ 
+         self.factor_culling=count_vis/(count_rad+1e-1)
+ 
+@@ -1510,7 +1518,7 @@ class GaussianModel:
+             else:
+                 imp_score=imp_score+accum_weights
+ 
+-            non_prune_mask = init_cdf_mask(importance=accum_weights, thres=0.99)
++            non_prune_mask = init_cdf_mask(importance=accum_weights, thres=SIMP_RETENTION)
+ 
+             self._culling[:,view.uid]=(non_prune_mask==False)
+ 
 diff --git a/milo/scene/mesh.py b/milo/scene/mesh.py
-index 988cd8c..66ba2d4 100644
+index 988cd8c..a0e9b47 100644
 --- a/milo/scene/mesh.py
 +++ b/milo/scene/mesh.py
+@@ -17,7 +17,7 @@ def nvdiff_rasterization(
+     return_positions:bool=False,
+ ):
+     device = verts.device
+-        
++
+     # Get full projection matrix
+     camera_mtx = camera.full_proj_transform
+     
 @@ -169,7 +169,7 @@ class MeshRasterizer(torch.nn.Module):
          self, 
          cameras:Union[List[Camera], Camera]=None,
@@ -11,8 +320,21 @@ index 988cd8c..66ba2d4 100644
      ):
          super().__init__()
          
+@@ -387,7 +387,11 @@ class ScalableMeshRenderer(torch.nn.Module):
+         use_antialiasing:bool=True,
+         return_pix_to_face:bool=False,
+         check_errors:bool=True,
+-        max_triangles_in_batch:int=2**24  # Corresponds to the nb of triangles above which Nvdiffrast breaks
++        max_triangles_in_batch:int=2**22  # clinical-pipeline patch: 2**24 already overflows nvdiffrast's
++                                          # SUBTRIANGLE buffer on dense ~12M-face in-loop meshes
++                                          # ("subtriangle count overflow", torch_rasterize.cpp:123);
++                                          # 2**22 (4.2M) sits inside the empirically safe 3.7-10M zone
++                                          # and forces real chunking (fuse_fragments merges passes).
+     ):
+         n_passes = (mesh.faces.shape[0] + max_triangles_in_batch - 1) // max_triangles_in_batch
+         
 diff --git a/milo/train.py b/milo/train.py
-index 392d733..746b443 100644
+index 392d733..95eb10d 100644
 --- a/milo/train.py
 +++ b/milo/train.py
 @@ -181,7 +181,12 @@ def training(
@@ -29,11 +351,66 @@ index 392d733..746b443 100644
          # If depth-normal regularization or mesh-in-the-loop regularization are active,
          # we use the rasterizer compatible with depth and normal rendering.
          if reg_kick_on or mesh_kick_on:
-@@ -222,7 +227,26 @@ def training(
-             Ll1 = l1_loss(image, gt_image)
-         ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
+@@ -215,14 +220,78 @@ def training(
+         )
+         gt_image = viewpoint_cam.original_image.cuda()
+ 
++        # Subject-isolation photometric mask (clinical pipeline). Densification is GRADIENT-driven,
++        # so masking the photometric loss is what stops background gaussians from being born.
++        # Background pixels: the render is replaced by GT (zero residual/gradient, and no artificial
++        # edges at the mask boundary, unlike a constant fill). Loaded on the fly + cached on the
++        # camera, mirroring the LiDAR loader below. Flag-guarded: off unless --subject_mask_dir set.
++        photometric_image = image
++        _smask = None
++        if getattr(args, "subject_mask_dir", ""):
++            if not getattr(viewpoint_cam, "_smask_loaded", False):
++                import ags_depth_normal_losses as _agsm
++                viewpoint_cam.subject_mask = _agsm.load_subject_mask(
++                    args.subject_mask_dir, viewpoint_cam.image_name,
++                    (image.shape[-2], image.shape[-1]), image.device)
++                viewpoint_cam._smask_loaded = True
++            _smask = getattr(viewpoint_cam, "subject_mask", None)
++            if _smask is not None:
++                photometric_image = image * _smask + gt_image * (1.0 - _smask)
++
+         # Rendering loss
+         if args.decoupled_appearance:
+-            Ll1 = L1_loss_appearance(image, gt_image, gaussians, viewpoint_cam.uid)
++            Ll1 = L1_loss_appearance(photometric_image, gt_image, gaussians, viewpoint_cam.uid)
+         else:
+-            Ll1 = l1_loss(image, gt_image)
+-        ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
++            Ll1 = l1_loss(photometric_image, gt_image)
++        ssim_value = fused_ssim(photometric_image.unsqueeze(0), gt_image.unsqueeze(0))
          loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
 -        
++
++        # Out-of-mask opacity penalty: actively suppresses floaters/background the mask no longer
++        # constrains (replaces LiDAR's incidental free-space suppression in anchor-only runs).
++        if _smask is not None and getattr(args, "subject_mask_bg_lambda", 0.0) > 0 and "alpha" in render_pkg:
++            loss = loss + args.subject_mask_bg_lambda * (render_pkg["alpha"][0] * (1.0 - _smask[0])).mean()
++
++        # Edge-aware FLATNESS prior (clinical pipeline): penalize depth 2nd-differences ONLY where the
++        # image is textureless. Fixes the anchor-only (lambda=0) failure on featureless surfaces (e.g.
++        # the table between the feet wobbles because zero photometric gradient leaves geometry
++        # unconstrained). Weight = exp(-beta*|grad I|): ~1 on flat regions, ~0 across texture/edges, so
++        # anatomy relief is untouched. Flag-guarded: off unless --flatness_lambda>0.
++        if getattr(args, "flatness_lambda", 0.0) > 0 and "expected_depth" in render_pkg:
++            _d = render_pkg["expected_depth"][0]           # H,W
++            _g = image.mean(0)                             # H,W luminance
++            dxx = _d[:, 2:] - 2 * _d[:, 1:-1] + _d[:, :-2]
++            dyy = _d[2:, :] - 2 * _d[1:-1, :] + _d[:-2, :]
++            gx = (_g[:, 2:] - _g[:, :-2]).abs()
++            gy = (_g[2:, :] - _g[:-2, :]).abs()
++            wx = torch.exp(-args.flatness_edge_beta * gx)
++            wy = torch.exp(-args.flatness_edge_beta * gy)
++            # HARD-protect anatomy: when isolating, flatness applies ONLY OUTSIDE the subject mask, so
++            # it can never smooth real skin relief (owner's concern). The textureless-gate exp(-b|gradI|)
++            # is a second guard: even smooth skin has pores/color variation -> gradient -> reduced force.
++            if _smask is not None:
++                wx = wx * (1.0 - _smask[0][:, 1:-1])
++                wy = wy * (1.0 - _smask[0][1:-1, :])
++            loss = loss + args.flatness_lambda * ((wx * dxx.abs()).mean() + (wy * dyy.abs()).mean())
 +
 +        # LiDAR metric-depth supervision (AGS-Mesh edge-aware log-L1) -- clinical pipeline H2 port.
 +        # MILo trains in metric coords scaled by lidar_depth_scale (S), so LiDAR metres are
@@ -57,7 +434,7 @@ index 392d733..746b443 100644
          # Depth-Normal Consistency Regularization
          if reg_kick_on:
              rendered_depth_to_normals: torch.Tensor = depth_to_normal(
-@@ -551,6 +575,13 @@ if __name__ == "__main__":
+@@ -551,6 +620,27 @@ if __name__ == "__main__":
      # > Used for pruning, densification and Gaussian pivots selection.
      parser.add_argument("--imp_metric", required=True, type=str, choices=["outdoor", "indoor"])
      parser.add_argument("--config_path", type=str, default="./configs/fast")
@@ -68,6 +445,35 @@ index 392d733..746b443 100644
 +                        help="weight for edge-aware log-L1 LiDAR depth supervision (0 = off = stock MILo)")
 +    parser.add_argument("--lidar_depth_scale", type=float, default=1.0,
 +                        help="scene scale-up factor S; LiDAR metres are multiplied by S to match the scaled render depth")
++    # --- clinical pipeline: subject-isolation photometric mask ---
++    parser.add_argument("--subject_mask_dir", type=str, default="",
++                        help="dir of per-frame subject masks (<image_name>.png, 255=subject); masks the photometric loss")
++    parser.add_argument("--subject_mask_bg_lambda", type=float, default=0.05,
++                        help="weight of the out-of-mask opacity penalty (floater suppression); 0 disables")
++    # --- clinical pipeline: edge-aware flatness prior (textureless-surface wobble) ---
++    parser.add_argument("--flatness_lambda", type=float, default=0.0,
++                        help="weight of the edge-aware depth-2nd-difference smoothness term; 0 disables")
++    parser.add_argument("--flatness_edge_beta", type=float, default=8.0,
++                        help="edge sensitivity: higher = flatness applies to fewer (flatter) regions")
++    # --- clinical pipeline: distillation retention percentile (task T8) ---
++    parser.add_argument("--simp_retention", type=float, default=0.99,
++                        help="importance-mass retention of the simplification passes (0.99 = stock; "
++                             "higher keeps more gaussians -> denser final model/mesh)")
      # Aggressive Cloning
      parser.add_argument("--aggressive_clone_from_iter", type=int, default = 500)
      parser.add_argument("--aggressive_clone_interval", type=int, default = 250)
+@@ -597,6 +687,14 @@ if __name__ == "__main__":
+ 
+     print("Optimizing " + args.model_path)
+     args.mesh_regularization = not args.no_mesh_regularization
++
++    # T8: route the distillation retention percentile into the gaussian model module (its simp
++    # passes read the module-level SIMP_RETENTION at call time).
++    if args.simp_retention != 0.99:
++        import scene.gaussian_model as _gm
++        _gm.SIMP_RETENTION = float(args.simp_retention)
++        print(f"[T8] simp retention = {args.simp_retention} "
++              f"(refine passes at {1.0 - (1.0 - args.simp_retention) / 10.0:.5f})")
+     
+     if args.port == -1:
+         args.port = np.random.randint(5000, 9000)

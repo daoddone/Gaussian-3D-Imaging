@@ -241,6 +241,54 @@ ambiguity (real limiter) is diagnosed but UNRESOLVED; MILo photorealism is essen
 wrong-rasterizer lower bound). Pose drift decisively ruled out. Highest-value: #1 isolation, #2 scale
 anchor, #3 fill-frame re-capture.
 
+## ⚠️ SCHEDULE CONFOUND (discovered 2026-07-07) + RE-RUN MATRIX
+
+**Every MILo run in this repo (sunglasses, hand-era scripts, ALL feet tests, face v1) silently used
+MILo's upstream-default accelerated "fast" schedule** (`--config_path ./configs/fast`: 18k iters,
+**densification stops at iter 3,000**, importance-prune 3k/8k) — never the stock schedule (30k,
+densify→15k). The gaussian budget was therefore starved in every experiment; provenance never recorded
+the schedule (fixed: `provenance_stage5.json` now carries `milo_schedule` + `mesh_config`).
+New: `configs/quality` (+ `configs/mesh/quality.yaml`) = stock schedule with mesh reg 20k→30k;
+**gotcha:** `regularization_from_iter` must equal `densify_until_iter` (the renderer that provides
+`area_max` for densification switches there — mismatch = KeyError at iter 3,000).
+
+**Standing findings (schedule-independent):** pose results (SfM-level), scale ambiguity + LiDAR-lock
+(Stage-3-level), nvdiffrast 2048 cap, metric-through-locked-poses, pixel-coverage detail ceiling,
+HQ background spread (front-end).
+**Confounded (fast-only measurements):** ARKit-vs-HQ quality verdict; depth_lambda A/B magnitudes;
+density A/B (dense flag truncated at 3k); mesh_config verdict (minor); MILo-vs-TSDF margin (direction
+safe — MILo won while starved).
+
+**Re-run matrix (2×2 at quality on the feet, then gated arms):**
+| run | capture/poses | depth_lambda | config |
+|---|---|---|---|
+| R1 | ARKit / VIO-conditioned | 0.2 | `pipeline_a6000_quality.yaml` (true tip-top) |
+| R2 | HQ / SfM+LiDAR-lock | 0.2 | `pipeline_a6000_quality.yaml` |
+| R3 | ARKit / VIO-conditioned | 0.0 | `pipeline_a6000_quality_depth0.yaml` |
+| R4 | HQ / SfM+LiDAR-lock | 0.0 | `pipeline_a6000_quality_depth0.yaml` |
+| R5 (gated) | ARKit capture / pure-SfM poses | best of above | tests "SfM vs ingested-VIO" on the same capture |
+| R6 (gated) | winner + λ∈{0.05,0.1}, density A/B @ quality, isolation, mesh highres, radegs photoreal eval | | |
+Face arms (running): v2 = schedule value (172 frames, quality); v3 = sharpness-selected ~362 frames.
+
+## BACKLOG UPDATES (2026-07-08, post-R4' + owner review of the fast-λ0 feet)
+
+- **Owner verdict on `output_hq_depth0` (fast+λ0 feet):** point cloud "looks great"; mesh "pretty
+  decent, just a little cartoonish." Diagnosis: MILo meshes carry baked DIFFUSE vertex colors (no
+  view dependence / texture). → NEW BACKLOG ITEM: **mesh appearance/texturing** — extract a texture
+  map from source images (SuGaR/MILo-style texture baking or per-face projection blending) onto the
+  final mesh. Geometry pipeline unaffected. Priority: medium (deliverable polish).
+- **R4' law reshuffles priorities:** capacity must match input quality (see SWEEP_RESULTS R4').
+  (a) **Capture protocol doc** promoted to TOP priority deliverable (moves captures into the branch
+  where capacity pays) — see CAPTURE_GUIDANCE.md "Protocol v2" addendum.
+  (b) **Retention-percentile sweep** demoted for weak captures (more final gaussians ≠ better there);
+  still relevant for strong captures.
+  (c) **Subject isolation** unchanged (top structural lever — floaters exist in every arm; λ0 lost
+  LiDAR's incidental free-space suppression).
+  (d) NEW: **strong-capture quality arm on a REAL clinical-style capture** — after a fill-frame
+  video-dense re-capture of feet, run fast-vs-quality_mid to confirm the strong-input branch applies
+  (the law predicts quality wins there).
+- λ0.2 is retired everywhere (worst in all 6 measured cells). LiDAR = anchor only.
+
 **Implementation notes (design agent) for the top levers:**
 - **Subject isolation** must mask the PHOTOMETRIC loss (MILo `train.py:221-229`), not just the init —
   densification is gradient-driven, so only removing the background RGB gradient stops background
@@ -255,3 +303,16 @@ anchor, #3 fill-frame re-capture.
 - **Fair ARKit-vs-HQ accuracy** is NOT possible from the current captures (moved live subject, no
   reference, scale ambiguity) — needs a STATIC phantom + known-size fiducial + a reference scan, isolation
   applied identically, then scale-locked rigid ICP to the reference. Current table = method-quality only.
+
+## BUILT 2026-07-09 (post-campaign, owner-directed)
+- **v2 OBJ export** (scripts/export_mesh_obj.py): clean→decimate(~200k tris, Cubit-ready)→xatlas UV
+  →texel texture bake (robust multi-view consensus)→OBJ+MTL+PNG in mm + full-res metric PLY +
+  export_meta.json (scale-provenance sidecar). Spec: docs/MESH_EXPORT_SPEC.md (Tepole/Gosain FE).
+- **Robust consensus color** (scripts/bake_mesh_colors.py): replaced naive top-3 with median-inlier
+  consensus (rejects shadow/spec/misregistered views — owner's concern). Shared by v1 vertex bake
+  and v2 texture bake.
+- **Edge-aware flatness prior** (train.py --flatness_lambda; config pipeline_a6000_depth0_iso_flat.yaml):
+  depth 2nd-diff penalty weighted exp(-beta|grad I|) → flattens textureless surfaces (table between
+  feet) WITHOUT touching textured anatomy. A/B pending vs the isolated baseline.
+- **SCALE is the gating item for FE use** (spec): our ~12% ambiguity >> their 2mm/10cm tolerance →
+  ruler fiducial required. export_meta.json flags scale confidence per output.

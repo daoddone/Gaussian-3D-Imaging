@@ -189,6 +189,23 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
                   f"2048 -> using -r {_r} (~{_max_side // _r}px) so the in-loop mesh rasterizes")
             resolution = str(_r)
 
+    # AUTO capacity selection (owner mandate: any capture processed to its best capacity without
+    # per-capture tuning). THE LAW from the quality campaign: capacity must match input quality —
+    # excess capacity on weak inputs manufactures junk detail. Capture strength is measured by
+    # view count AND SfM/init point support (AND, because ARKit models carry 100k BAKED DA3 points
+    # that would otherwise inflate the score). Thresholds calibrated on the campaign anchors:
+    # face v1 172v/45k pts (strong), face v3 362v/117k (strong), feet 47-57v (weak).
+    if str(opt.get("milo_schedule", "fast")) == "auto":
+        _imgs_n = len(colmap_io.read_images_binary(dataset_dir / "sparse" / "0" / "images.bin"))
+        _pts_n = len(colmap_io.read_points3D_binary(dataset_dir / "sparse" / "0" / "points3D.bin"))
+        _strong = _imgs_n >= 120 and _pts_n >= 40_000
+        opt = dict(opt)
+        opt["milo_schedule"] = "quality_mid" if _strong else "fast"
+        if _strong and str(opt.get("mesh_config", "default")) == "default":
+            opt["mesh_config"] = "quality_mid"
+        print(f"[milo] AUTO capacity: views={_imgs_n} init_pts={_pts_n} -> "
+              f"{'STRONG' if _strong else 'WEAK'} capture -> schedule={opt['milo_schedule']}")
+
     # 1) scene scale -> ~unit range for the rasterizer
     radius = _nerf_radius(dataset_dir / "sparse" / "0")
     S = float(opt.get("milo_scale", 0.0)) or max(1.0, 1.0 / max(radius, 1e-6))
@@ -213,6 +230,36 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
     mesh_config_name = str(opt.get("mesh_config", "default"))
     if mesh_config_name and mesh_config_name != "default":
         train_cmd += ["--mesh_config", mesh_config_name]   # MILo mesh tet-grid preset: verylowres..veryhighres
+    # Training SCHEDULE preset (configs/<name>). Default "fast" = Mini-Splatting2 accelerated: densify
+    # stops at iter 3k, simp at 3k/8k, 18k iters -> small gaussian budgets (~50-400k) that CAP mesh
+    # granularity. "quality" = MILo/3DGS stock: 30k iters, densify until 15k, simp 15k/20k, mesh reg
+    # 20k->30k (use with mesh_config "quality"). NOTE: config-file values OVERRIDE CLI args in MILo.
+    schedule = str(opt.get("milo_schedule", "fast"))
+    if schedule and schedule != "fast":
+        train_cmd += ["--config_path", f"./configs/{schedule}"]
+    # Distillation retention percentile (T8): the DIRECT final gaussian/vertex-count control
+    # (0.99 = stock; e.g. 0.995 keeps ~2x more through simp1/simp2 for strong captures).
+    _ret = float(opt.get("simp_retention", 0.99))
+    if _ret != 0.99:
+        train_cmd += ["--simp_retention", str(_ret)]
+        print(f"[milo] simp retention = {_ret}")
+
+    # Edge-aware flatness prior (textureless-surface wobble, e.g. table between the feet).
+    _flat = float(opt.get("flatness_lambda", 0.0))
+    if _flat > 0:
+        train_cmd += ["--flatness_lambda", str(_flat),
+                      "--flatness_edge_beta", str(opt.get("flatness_edge_beta", 8.0))]
+        print(f"[milo] flatness prior ON: lambda={_flat}")
+    # Subject isolation (stage 2): photometric mask + out-of-mask opacity penalty. Masks are made by
+    # scripts/make_subject_masks.py into <session>/subject_masks (session root = capture_dir's parent).
+    if bool(opt.get("subject_isolation", False)):
+        mask_dir = Path(capture_dir).parent / "subject_masks"
+        if (mask_dir / "box.json").exists():
+            train_cmd += ["--subject_mask_dir", str(mask_dir)]
+            print(f"[milo] subject isolation ON: masks from {mask_dir}")
+        else:
+            print(f"[milo] WARNING: subject_isolation requested but {mask_dir} missing — run "
+                  f"scripts/make_subject_masks.py first; proceeding WITHOUT isolation")
     if dense:
         # --dense_gaussians recovers thin structure (glasses frame, edges) the base densifier drops.
         # Tradeoff: it slightly roughens flat regions (redistribution, not a strict win). REVISIT on the
@@ -226,12 +273,16 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
     if not mesh_reg:
         train_cmd.append("--no_mesh_regularization")
     subprocess.run(train_cmd, cwd=str(MILO_DIR), env=env, check=True)
+    # Extraction must target the iteration training ACTUALLY saved (schedule-dependent: fast=18k,
+    # quality=30k). mesh_extract_sdf's own default is a hardcoded 18000 -> pass the latest found.
+    it_dirs = sorted((raw_out / "point_cloud").glob("iteration_*"), key=lambda p: int(p.name.split("_")[1]))
+    last_iter = int(it_dirs[-1].name.split("_")[1])
     if mesh_reg:
         subprocess.run([str(MILO_ENV_PY), "mesh_extract_sdf.py", "-s", str(scaled_ds), "-m", str(raw_out),
-                        "--rasterizer", "radegs"], cwd=str(MILO_DIR), env=env, check=True)
+                        "--rasterizer", "radegs", "--iteration", str(last_iter)],
+                       cwd=str(MILO_DIR), env=env, check=True)
 
     # 3) scale outputs back to METRIC + write the Stage-6 contract
-    it_dirs = sorted((raw_out / "point_cloud").glob("iteration_*"), key=lambda p: int(p.name.split("_")[1]))
     gz_in = it_dirs[-1] / "point_cloud.ply"
     n_g, gxyz = _scale_down_gaussians(gz_in, output_dir / "point_cloud.ply", S)
     nv, nf, pad, crop = 0, 0, float(opt.get("milo_crop_pad", 0.10)), None
@@ -241,12 +292,85 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
         crop = _object_box(gxyz, pad_frac=pad) if pad >= 0 else None
         nv, nf = _scale_down_mesh(raw_out / "mesh_learnable_sdf.ply", output_dir / "mesh.ply", S, crop_box=crop)
 
+    # Metric-scale provenance (task T1): auto-discover the scale sidecar written by
+    # scripts/pose_ba/04_metric_anchor.py in ancestors of the dataset dir (e.g. metric_sfm/), so
+    # every reconstruction records WHERE its absolute scale came from and how confident it is.
+    metric_scale = None
+    try:
+        _cands = []
+        for _anc in Path(dataset_dir).resolve().parents:
+            _cands += [_anc / "scale_sidecar.json", _anc / "metric_sfm" / "scale_sidecar.json",
+                       _anc / "metric" / "scale_sidecar.json"]
+        for _sc in _cands:
+            if _sc.exists():
+                _s = json.loads(_sc.read_text())
+                metric_scale = {k: _s.get(k) for k in
+                                ("primary_anchor", "scale", "confidence", "anchor_agreement_pct")}
+                break
+    except Exception:  # noqa: BLE001 — provenance enrichment must never fail the run
+        pass
+
     prov = {"stage5_host": "MILo (in-loop mesh, depth-supervised)" if mesh_reg else "MILo (splatting only, mesh reg off)",
+            "milo_schedule": schedule, "mesh_config": mesh_config_name,
             "gaussians": n_g, "views": n_imgs, "depth_lambda": depth_lambda, "mesh_regularization": mesh_reg,
             "milo_scale": S, "nerf_radius": radius, "imp_metric": imp_metric,
+            "metric_scale_anchor": metric_scale,
             "mesh_vertices": nv, "mesh_triangles": nf, "mesh_cropped_to_object_pad": pad if crop else None,
             "rasterizer": "radegs", "note": "trained scaled x1/radius; outputs re-metriced /S; mesh cropped to Gaussian box+pad"}
     (output_dir / "provenance_stage5.json").write_text(json.dumps(prov, indent=2))
+
+    # Mesh appearance bake (the "cartoonish" fix): re-color vertices from the TOP-3 sharpest
+    # best-angle source views (visibility-tested) instead of MILo's view-averaged estimate.
+    # Writes mesh_textured.ply alongside mesh.ply. Best-effort — never fails the reconstruction.
+    try:
+        _evalpy = Path(os.path.expanduser("~/miniforge3/envs/pipeline_stage2_frontend/bin/python"))
+        if _evalpy.exists() and mesh_reg and (output_dir / "mesh.ply").exists():
+            subprocess.run([str(_evalpy), str(_REPO / "scripts" / "bake_mesh_colors.py"),
+                            "--output-dir", str(output_dir),
+                            "--colmap", str(Path(dataset_dir) / "sparse" / "0"),
+                            "--images", str(Path(dataset_dir) / "images")],
+                           timeout=1800, check=False,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if (output_dir / "mesh_textured.ply").exists():
+                print(f"[milo] sharp color bake -> {output_dir}/mesh_textured.ply")
+    except Exception as _e:  # noqa: BLE001
+        print(f"[milo] color bake skipped: {_e}")
+
+    # Analysis-ready OBJ export (task T6): clean/decimate/UV-unwrap/texture-bake -> export/mesh.obj
+    # (+MTL+PNG, mm) + mesh_metric_mm.ply + export_meta.json with auto-discovered scale provenance
+    # (T1 sidecar). Default ON so every reconstruction emits the downstream deliverable; disable with
+    # options export_obj: false. Best-effort — never fails the reconstruction. ~5-15 min extra.
+    try:
+        _evalpy = Path(os.path.expanduser("~/miniforge3/envs/pipeline_stage2_frontend/bin/python"))
+        if (_evalpy.exists() and mesh_reg and (output_dir / "mesh.ply").exists()
+                and bool(opt.get("export_obj", True))):
+            subprocess.run([str(_evalpy), str(_REPO / "scripts" / "export_mesh_obj.py"),
+                            "--output-dir", str(output_dir),
+                            "--colmap", str(Path(dataset_dir) / "sparse" / "0"),
+                            "--images", str(Path(dataset_dir) / "images")],
+                           timeout=2400, check=False,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if (output_dir / "export" / "mesh.obj").exists():
+                print(f"[milo] OBJ export -> {output_dir}/export/ (mesh.obj + texture + export_meta.json)")
+            else:
+                print("[milo] OBJ export did not produce mesh.obj — run scripts/export_mesh_obj.py "
+                      "manually to see the error")
+    except Exception as _e:  # noqa: BLE001
+        print(f"[milo] OBJ export skipped: {_e}")
+
+    # Standardized review set (owner request): subject-centered/axis-aligned .ply copies + labeled
+    # canonical renders + subject-level stats, so every output is instantly reviewable by human or
+    # script without manual reorientation. Best-effort — never fails the reconstruction.
+    try:
+        _evalpy = Path(os.path.expanduser("~/miniforge3/envs/pipeline_stage2_frontend/bin/python"))
+        if _evalpy.exists():
+            subprocess.run([str(_evalpy), str(_REPO / "scripts" / "export_review.py"), str(output_dir),
+                            "--label", f"{Path(output_dir).parent.name}/{Path(output_dir).name}"],
+                           timeout=900, check=False,
+                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            print(f"[milo] review set -> {output_dir}/review/ (subject-centered ply + views.png + review.json)")
+    except Exception as _e:  # noqa: BLE001
+        print(f"[milo] review export skipped: {_e}")
     if mesh_reg:
         print(f"[milo] DONE: {output_dir}/point_cloud.ply ({n_g} gaussians), mesh.ply ({nv} verts / {nf} tris)")
     else:

@@ -122,3 +122,21 @@ def depth_normal_loss(rendered_depth, cam, rgb, K, depth_lambda=0.2,
         if nm.any():
             total = total + normal_lambda * (n_pred[nm] - gt_normal[nm]).abs().mean()
     return total
+
+
+def load_subject_mask(mask_dir, image_name, hw, device):
+    """Subject-isolation mask loader (clinical pipeline): <mask_dir>/<image_name>.png, 255=subject.
+    Returns (1,H,W) float in {0,1} resized NEAREST to the render resolution, or None if absent.
+    Mirrors load_lidar_depth's on-the-fly + cache-on-camera pattern."""
+    import os
+    p = os.path.join(mask_dir, str(image_name) + ".png")
+    if not os.path.isfile(p):
+        return None
+    import numpy as np
+    from PIL import Image
+    m = np.asarray(Image.open(p))
+    if m.ndim == 3:
+        m = m[..., 0]
+    t = torch.from_numpy((m > 127).astype("float32"))[None, None]
+    t = torch.nn.functional.interpolate(t, size=hw, mode="nearest")[0]
+    return t.to(device)

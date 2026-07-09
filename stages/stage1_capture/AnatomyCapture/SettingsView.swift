@@ -7,6 +7,12 @@ import SwiftUI
 struct SettingsView: View {
     @AppStorage("upload_base_url") private var baseURL: String = ""
     @AppStorage("upload_token") private var token: String = ""
+    // Capture tuning (read by CaptureTuning / KeyframeSelector at each recording). 0 -> built-in
+    // default (360 frames / 120 s). Raised from the shipped 60/20 so the STRONG-CAPTURE branch
+    // (docs/PIPELINE_RECOMMENDATION.md: 150-400 sharp frames) is reachable. Compute cost note: more
+    // frames = longer SfM + reconstruction on the Linux box; benchmark on the first strong capture.
+    @AppStorage("max_keyframes") private var maxKeyframes: Int = 360
+    @AppStorage("budget_seconds") private var budgetSeconds: Double = 120
     @Environment(\.dismiss) private var dismiss
 
     private var configured: Bool { !baseURL.isEmpty && !token.isEmpty }
@@ -22,6 +28,12 @@ struct SettingsView: View {
                     SecureField("Token", text: $token)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
+                }
+                Section("Capture length") {
+                    Stepper("Max frames: \(maxKeyframes)", value: $maxKeyframes, in: 30...1000, step: 30)
+                    Stepper("Time budget: \(Int(budgetSeconds)) s", value: $budgetSeconds, in: 10...300, step: 10)
+                    Text("Strong-capture branch wants 150-400 sharp frames over a slow orbit. Longer captures take longer to process on the server.")
+                        .font(.footnote).foregroundStyle(.secondary)
                 }
                 Section {
                     Text(configured

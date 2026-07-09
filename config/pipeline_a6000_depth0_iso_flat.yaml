@@ -1,0 +1,44 @@
+# A6000 knob-sweep variant: NO LiDAR depth supervision (depth_lambda: 0.0) at full density.
+# IDENTICAL to config/pipeline_a6000.yaml except stage5.depth_lambda = 0.0 — isolates the effect of
+# the LiDAR metric-depth term on surface accuracy/roughness (does the sensor depth help or fight the
+# photometric fit?). Stage-5-only re-run (reuses metric/colmap). See DAILY_NOTES / EXPERIMENTS_BACKLOG.
+stages:
+  stage2_frontend: { enabled: true,  env: pipeline_stage2_frontend,      entry: stages/stage2_frontend/run.py }
+  stage3_metric:   { enabled: true,  env: pipeline_stage3_metric,        entry: stages/stage3_metric/run.py }
+  stage4_normals:  { enabled: false, env: pipeline_stage4_normals,       entry: stages/stage4_normals/run.py }
+  stage5_reconstruction: { enabled: true, env: pipeline_stage5_reconstruction, entry: stages/stage5_reconstruction/run.py }
+
+stage2:
+  model: DA3NESTED-GIANT-LARGE
+  use_ray_pose: true
+  free_geometry_refinement: false
+  pose_conditioning: true
+  bf16: false
+  export_formats: [ply, npz]
+  max_frames: null
+
+stage3:
+  agreement_threshold_percent: 3.0
+  min_depth_inlier_fraction: 0.30
+  depth: { min_valid_depth_m: 0.05, max_valid_depth_m: 5.0, ransac_iterations: 200, ransac_inlier_tol: 0.10, fit_offset: false }
+  icp: { enabled: true, max_correspondence_distance_m: 0.02, max_iterations: 50 }
+  colmap: { bake_points: true, max_points: 100000 }
+  ruler: { known_size_meters: null }
+  flag_halts_pipeline: false
+
+stage4: { model: StableNormal_turbo, fixed_weight: 0.05, confidence_tied_weight: false }
+
+stage5:
+  host: milo
+  milo_resolution: 1
+  data_device: cuda
+  dense_gaussians: true
+  depth_lambda: 0.0               # anchor-only (the proven best for these captures)
+  imp_metric: indoor
+  milo_crop_pad: 0.10
+  subject_isolation: true          # (recommended)
+  flatness_lambda: 0.05           # edge-aware smoothness on textureless regions (table wobble)
+  flatness_edge_beta: 8.0
+
+paths:
+  sessions_root: sessions
