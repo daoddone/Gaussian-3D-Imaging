@@ -51,6 +51,17 @@
 	<key>LSSupportsOpeningDocumentsInPlace</key>
 	<true/>
 
+	<!-- Transmit goes to the pipeline box by raw IP over plain HTTP (http://184.105.3.239:8902).
+	     iOS ATS blocks cleartext HTTP by default, and NSExceptionDomains does not apply to IP
+	     literals — so a global allowance is the only working exception for an IP endpoint. The
+	     upload itself is bearer-token + per-transmit-PIN gated server-side; the proper long-term
+	     fix is TLS via a reverse proxy + domain (scripts/upload_server/DEPLOY.md), then remove this. -->
+	<key>NSAppTransportSecurity</key>
+	<dict>
+		<key>NSAllowsArbitraryLoads</key>
+		<true/>
+	</dict>
+
 	<key>UILaunchScreen</key>
 	<dict/>
 </dict>
