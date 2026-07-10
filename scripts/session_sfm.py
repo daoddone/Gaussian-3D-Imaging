@@ -30,6 +30,9 @@ def main():
     ap.add_argument("--session", required=True)
     ap.add_argument("--res", help="use frames of this WxH (default: dominant size)")
     ap.add_argument("--min-inliers", type=int, default=50)
+    ap.add_argument("--target-frames", type=int, default=300,
+                    help="sharpness-select down to ~this many frames (v3 recipe); no-op if fewer")
+    ap.add_argument("--no-sharpness", action="store_true")
     args = ap.parse_args()
 
     import pycolmap
@@ -52,6 +55,29 @@ def main():
           f"(sizes present: {dict(Counter(sizes.values()))})")
     if len(subset) < 10:
         raise SystemExit("[sfm] too few frames at the chosen resolution")
+
+    # SHARPNESS SELECTION — the proven v3-recipe stage the unified ingest initially dropped
+    # (owner-caught 2026-07-09): keep the sharpest frame per temporal window (blur rejection;
+    # app keyframes are motion-gated but blur-blind). Documented win: visible completeness gain
+    # at equal smoothness. Only engages when the capture exceeds the target frame count.
+    if not args.no_sharpness and len(subset) > args.target_frames:
+        import cv2
+        window = max(1, round(len(subset) / args.target_frames))
+        picked = []
+        for i in range(0, len(subset), window):
+            group = subset[i:i + window]
+            best, best_v = group[0], -1.0
+            for f in group:
+                g = cv2.imread(str(f), cv2.IMREAD_GRAYSCALE)
+                g = cv2.resize(g, (480, 360) if g.shape[1] > g.shape[0] else (360, 480),
+                               interpolation=cv2.INTER_AREA)
+                v = float(cv2.Laplacian(g, cv2.CV_64F).var())
+                if v > best_v:
+                    best, best_v = f, v
+            picked.append(best)
+        print(f"[sfm] sharpness selection: {len(picked)}/{len(subset)} frames "
+              f"(sharpest per {window}-frame window)")
+        subset = picked
 
     # shared-K init from the per-frame device intrinsics (median fx of the subset)
     intr = json.load(open(sess / "capture" / "intrinsics.json"))
