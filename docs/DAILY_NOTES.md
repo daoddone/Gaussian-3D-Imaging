@@ -4,6 +4,71 @@ Running engineering journal. **Newest entry on top.**
 
 ---
 
+## 2026-07-09 (later) — T1–T8 engineering sprint, FIRST ground-truth scale validation (−0.85% / 0.42 mm), transmit live
+
+Agent-tier handoff (Opus 4.8 → Fable 5) mid-day; work continued from docs/TECH_ROADMAP.md with full
+project context (the domain/tech doc split stands as documentation hygiene; the engineering agent works
+with the application context in view — the "guardrail" concern behind the split was a misunderstanding).
+
+**The sprint (T1–T8, all landed same-day; every piece through its own validation gate):**
+- **T1 unified metric anchor** (`scripts/pose_ba/04_metric_anchor.py`): VIO-primary (Umeyama on camera
+  centers + pairwise-baseline cross-validation) + LiDAR ray-median cross-check on one gauge-free model →
+  `scale_sidecar.json` {primary, scale, agreement %, confidence}. Confidence logic distinguishes
+  ATTRIBUTABLE disagreement (near-field LiDAR, auto-flagged) from UNEXPLAINED (forces review). Validated:
+  exact 03b regression (S=0.078135/1.0% MAD); dual-anchor on the close-range sunglasses capture correctly
+  attributes a 29.2% LiDAR bias at 0.20 m and selects VIO (1.7 mm residual). Consumers auto-discover the
+  sidecar: stage-5 provenance (`metric_scale_anchor`) + OBJ `export_meta.json`.
+- **T2 scale-validation harness** (`scripts/validate_scale.py`): ArUco corners → multi-view DLT in the
+  metric model → scale error %, per-axis anisotropy, abs-mm. Synthetic self-test PASS (+2.30% injected →
+  +2.38%). Printable exact-size sheet: `docs/aruco_scale_reference.png` (2×50 mm markers + 100 mm
+  print-check bar; detector-validated).
+- **T3 capture-quality score** (`scripts/capture_quality.py`): frames/sharpness/VIO-conditioning
+  (eigen-diversity, turning, curvature variation)/angular coverage + guidance; reproduces the campaign's
+  verdicts on the historical captures (ARKit feet diversity 0.102 = the bad-conditioning signature).
+- **T4 capture-mode matrix** (subagent + review): {arkit1080, arkit4K, hqStills} × LiDAR toggle;
+  arkit4K = real 12 MP `captureHighResolutionFrame` per keyframe with stream-res fallback. All files
+  parse under Swift 6 (independently re-verified).
+- **T6 auto-OBJ in driver**: every mesh reconstruction now auto-emits export/mesh.obj(+MTL+PNG, mm) with
+  sidecar-sourced scale provenance — CONFIRMED end-to-end on the feet flagship (export_meta carries
+  `lidar_ray_median / medium`). Sidecar discovery hardened for the swapped `metric/`↔`metric_sfm/` layout.
+- **T7 photoreal harness** (subagent): first numbers ever — PSNR 32.97 / SSIM 0.928 / LPIPS 0.305
+  (train-view label, MILo conventions) on the face flagship.
+- **T8 retention knob**: `--simp_retention` routes all 6 distillation thresholds (default = stock).
+- Validation gates caught 6 real bugs same-day: open3d transitive import, load_poses shape+convention,
+  swapped-layout sidecar discovery, wrong T6 model path, xatlas API field, **mixed-res LiDAR mapping (below)**.
+
+**FIELD DAY (owner device tests) — the milestone:**
+- **Andrew capture (arkit4K pilot, 41 frames/15 s):** 12 MP still path WORKS on-device (35/41 true
+  4032×3024, correct 2.1× K). First longer attempt CRASHED the app → root-caused: 12 MP PNG encoding
+  outruns disk at the keyframe rate → unbounded FrameWriter backlog → jetsam. **Crash guards shipped**
+  (still rate-limit ≥0.75 s + pendingAppends>4 backpressure, both degrade to stream fallback). Guards
+  field-validated by the next capture (97 frames, no crash; 26% stills = throttle working).
+- **Owl + 50 mm ArUco (the ground-truth test): markerless scale error −0.85%, median abs 0.42 mm
+  (max 0.75), anisotropy 0.52%.** VIO↔LiDAR agreement 0.9% (confidence HIGH) after fixing a
+  field-caught bug: the LiDAR anchor's color→depth pixel mapping used session-global color_resolution,
+  wrong for mixed-res captures (bogus 135% "disagreement"); now per-image COLMAP camera dims (HQ-feet
+  regression unchanged). **Three independent references (VIO, LiDAR, physical marker) converge within
+  ~1% — beats the 2–5% literature floor; the excited-motion prescription (T3) is what conditions VIO
+  this well.** Chain runtime: capture→number ≈ 4–5 min (no reconstruction needed for scale) →
+  validation can piggyback on any capture containing the sheet. n=1: build a 10–15-capture validation
+  set across standoff/motion/lighting for a defensible distribution.
+- **Transmit live:** upload receiver deployed (systemd, 0.0.0.0:8902, fresh token, PIN 6250 gate,
+  auth verified 401/401/200), Info.plist ATS exception added (iOS blocks plain-HTTP without it;
+  IP endpoints can't use per-domain exceptions). Two throwaway transmits verified + deleted per owner.
+- **`scripts/session_sfm.py`**: generic capture→SfM runner (dominant-res subset for mixed-res, shared-K,
+  sequential); the missing substrate for T5 and for any new session. New-session convention: metric_sfm
+  + a `metric` symlink for legacy-layout consumers (run.py, masks).
+
+**In flight tonight:** Andrew full-chain rehearsal (stage 5 re-launched detached after a session restart
+killed the first attempt at 21% — pre-steps durable). Natalie strong-capture (markerless; the validated
+dual-anchor agreement is the quality gate). Then T5 benchmark harness.
+
+**Mask-robustness note (owner skepticism, on record):** the geometric mask on the Andrew face session
+keeps head+torso+near context and cuts far background (coverage 0.58 median) — coarse-but-safe by
+design (fails open, never cuts subject). Adequate for floater/background suppression; NOT a tight
+anatomy silhouette. If tonight's run shows isolation underperforming on faces, the SAM2 refinement (T9,
+backlogged) is the designed upgrade path.
+
 ## 2026-07-09 — Deliverables layer: sharp mesh appearance, OBJ export for FEA, capture-app upgrade, collaborator-spec verification
 
 Focus shifted from "reconstruction quality" (settled 07-08) to **making the outputs usable downstream**
