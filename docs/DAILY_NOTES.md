@@ -63,6 +63,20 @@ with the application context in view — the "guardrail" concern behind the spli
 killed the first attempt at 21% — pre-steps durable). Natalie strong-capture (markerless; the validated
 dual-anchor agreement is the quality gate). Then T5 benchmark harness.
 
+**Andrew rehearsal OUTPUT verdict (owner review + diagnosis):** raw outputs looked bad — blurry
+face, a floater "halo" over the head, heavy background. Diagnosis against the documented findings:
+(1) capture class — 41 frames/15 s, non-fill-frame face (~500 px effective at training res, HALF the
+old fill-frame captures despite 12 MP), cluttered specular lab → the #1 documented law (capture
+dominates), output pre-declared throwaway; (2) REAL pipeline finding — the halo sits INSIDE the
+convex-hull mask (58% frame coverage), where background is supervised and the opacity penalty is
+inert → convex-hull isolation is INSUFFICIENT for a person in a cluttered scene (owner's mask
+skepticism VALIDATED; T9/SAM2 promoted conditionally — judge on the next strong capture); (3) owner
+viewed the raw ply files — the subject-centered review/ copies (the "prepped for viewing" artifacts)
+exist and look far better (roughness 13.1°, subject isolated); the fair residue is that the subject
+crop shares the coarse mask's root; (4) one config delta vs the feet flagship: dense_gaussians false
+(recommended) vs true (flagship) — minor, testable. REMEDY = tonight's protocol-compliant fill-frame
+capture; then re-judge the mask.
+
 **Mask-robustness note (owner skepticism, on record):** the geometric mask on the Andrew face session
 keeps head+torso+near context and cuts far background (coverage 0.58 median) — coarse-but-safe by
 design (fails open, never cuts subject). Adequate for floater/background suppression; NOT a tight
