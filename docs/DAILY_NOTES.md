@@ -4,6 +4,37 @@ Running engineering journal. **Newest entry on top.**
 
 ---
 
+## 2026-07-10 (later) — Isolation archaeology + FACE REGRESSION PASSES (pipeline code is clean)
+
+**Owner-directed audit of "isolation" (the word drifted across three mechanisms):**
+1. As DESIGNED (07-08): photometric mask + **3D box-prune** + output-crop. The box-prune — the
+   compute-focus component — was **never implemented** (box.json's only consumer was an existence
+   check). The design review even predicted the failure: "residual background inside the box survives
+   (box-prune + output-crop mop up)."
+2. As IMPLEMENTED: photometric replacement + out-of-mask opacity penalty only.
+3. As REUSED: the same masks gate the flatness prior ("protect anatomy from smoothing") — different
+   role, same word.
+- **Historic-best face (output_v3_quality_mid) used NO isolation** (config-proven: runner options never
+  request it; provenance has no mask fields). The unification seeded the error by calling recipe
+  ingredients "historical drift" and locking isolation ON globally off one feet A/B.
+- **Andrew's block/halo mechanism (visual proof `andrew_recipes/mask_hullfill_overlay.jpg`):** convex
+  hull sweeps huge background; interior is supervised toward real wall pixels AND penalty-exempt →
+  floaters park there; boundary penalty sharpens them into the block. Feet won (−58% floaters) because
+  its hull is tight and in-hull background near — mask isolation is GEOMETRY-DEPENDENT, never global.
+- Even with isolation, Andrew-dense spent ~26% of final capacity off-subject (601k vs 443k subject) —
+  the compute argument for the prune.
+- **Box-prune now BUILT** (flag-gated, default-off, 747a92a): periodic outside-box prune at the
+  densification cadence; metric box.json × S; independent gate → mask-only/prune-only/both A/B arms.
+
+**FACE V3 REGRESSION (owner-requested "did we break the pipeline?"): PASS.** Today's full unified code
+on the identical historic dataset_v3, auto-branch resolved views=362/init=117,352 → STRONG →
+quality_mid + dense OFF (exactly the proven recipe, chosen automatically): 100,064 gaussians (−1.8%),
+subject 87,255 (−1.6%), subject-mesh roughness **11.62° vs 12.30°** (slightly smoother), visually
+equivalent (`_sweep_eval/face_regression/`). The unification-era code changes did NOT regress quality;
+Andrew's regression is capture class + mask-isolation geometry, full stop.
+
+---
+
 ## 2026-07-10 — Two-tier sharpness policy (blur rejection at ANY pool size), validated on owl ground truth
 
 Owner question: "should we prune for sharpness regardless of pool size?" Answer shipped in
