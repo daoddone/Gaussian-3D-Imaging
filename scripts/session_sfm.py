@@ -56,28 +56,40 @@ def main():
     if len(subset) < 10:
         raise SystemExit("[sfm] too few frames at the chosen resolution")
 
-    # SHARPNESS SELECTION — the proven v3-recipe stage the unified ingest initially dropped
-    # (owner-caught 2026-07-09): keep the sharpest frame per temporal window (blur rejection;
-    # app keyframes are motion-gated but blur-blind). Documented win: visible completeness gain
-    # at equal smoothness. Only engages when the capture exceeds the target frame count.
-    if not args.no_sharpness and len(subset) > args.target_frames:
+    # SHARPNESS POLICY (two tiers; owner-directed 2026-07-10):
+    #   tier 1 — BLUR REJECTION at ANY pool size: drop frames < 0.45x the session-median sharpness,
+    #            capped at 15% of the pool (views are the scarcest resource on small captures; this
+    #            removes RUINED frames, it does not enforce crispness — mild softness in a minority
+    #            of views is outvoted by multi-view averaging and the sharpness-weighted bake).
+    #   tier 2 — TARGET-COUNT SELECTION (the proven v3-recipe stage): sharpest-per-window down to
+    #            ~target when the pool exceeds it (app keyframes are motion-gated but blur-blind).
+    if not args.no_sharpness:
         import cv2
-        window = max(1, round(len(subset) / args.target_frames))
-        picked = []
-        for i in range(0, len(subset), window):
-            group = subset[i:i + window]
-            best, best_v = group[0], -1.0
-            for f in group:
-                g = cv2.imread(str(f), cv2.IMREAD_GRAYSCALE)
-                g = cv2.resize(g, (480, 360) if g.shape[1] > g.shape[0] else (360, 480),
-                               interpolation=cv2.INTER_AREA)
-                v = float(cv2.Laplacian(g, cv2.CV_64F).var())
-                if v > best_v:
-                    best, best_v = f, v
-            picked.append(best)
-        print(f"[sfm] sharpness selection: {len(picked)}/{len(subset)} frames "
-              f"(sharpest per {window}-frame window)")
-        subset = picked
+
+        def sharpness(f):
+            g = cv2.imread(str(f), cv2.IMREAD_GRAYSCALE)
+            g = cv2.resize(g, (480, 360) if g.shape[1] > g.shape[0] else (360, 480),
+                           interpolation=cv2.INTER_AREA)
+            return float(cv2.Laplacian(g, cv2.CV_64F).var())
+
+        import numpy as _np
+        sharp = {f: sharpness(f) for f in subset}
+        med = float(_np.median(list(sharp.values())))
+        ruined = sorted((f for f in subset if sharp[f] < 0.45 * med), key=lambda f: sharp[f])
+        max_drop = int(0.15 * len(subset))
+        drop = set(ruined[:max_drop])
+        if drop:
+            print(f"[sfm] blur rejection: dropped {len(drop)}/{len(subset)} frames "
+                  f"(<0.45x median sharpness {med:.0f}; cap 15%)")
+            subset = [f for f in subset if f not in drop]
+
+        if len(subset) > args.target_frames:
+            window = max(1, round(len(subset) / args.target_frames))
+            picked = [max(subset[i:i + window], key=lambda f: sharp[f])
+                      for i in range(0, len(subset), window)]
+            print(f"[sfm] sharpness selection: {len(picked)}/{len(subset)} frames "
+                  f"(sharpest per {window}-frame window)")
+            subset = picked
 
     # shared-K init from the per-frame device intrinsics (median fx of the subset)
     intr = json.load(open(sess / "capture" / "intrinsics.json"))

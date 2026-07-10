@@ -4,6 +4,32 @@ Running engineering journal. **Newest entry on top.**
 
 ---
 
+## 2026-07-10 — Two-tier sharpness policy (blur rejection at ANY pool size), validated on owl ground truth
+
+Owner question: "should we prune for sharpness regardless of pool size?" Answer shipped in
+`scripts/session_sfm.py`: **two tiers**, because target-count selection and ruined-frame rejection are
+different operations with different risk profiles.
+
+- **Tier 1 — blur REJECTION, any pool size:** drop frames `< 0.45× session-median` Laplacian sharpness,
+  **capped at 15% of the pool**. Relative-to-median self-calibrates per capture; the cap can never gut
+  angular coverage (views = the scarcest resource on weak captures, per the capacity law); pools ≤6
+  frames get an implicit pass (15% rounds to 0). Rationale: a truly smeared frame actively supervises
+  smear from its viewpoint — worse than absent — while *mild* softness in a minority of views is
+  outvoted by multi-view averaging + the sharpness-weighted bake.
+- **Tier 2 — target-count SELECTION (the restored v3 stage, unchanged):** sharpest-per-window down to
+  ~300 when the pool exceeds the target.
+- **End-to-end validation** (scratch symlink copy of the owl session — real session untouched):
+  rejection dropped 5/72 dominant-res frames → SfM **67/67 registered (100%**, was 71/72**)**, points
+  7,890→**8,028**, reproj 0.676 px; anchor agreement 0.9%→**0.8%** (confidence high); ArUco marker
+  validation **−0.53% scale / 0.27 mm median abs** (was −0.85% / 0.42 mm), anisotropy 0.70%. Every
+  metric improved — the smeared frames were pure liability.
+  - Would-drop on Andrew's capture: 5/41 (the genuinely smeared tail). His prior runs used all frames.
+- **Process discipline note:** the session restart killed the v3-recipe completion watcher (chain itself
+  survived via setsid). Watchers are now harness-tracked background tasks that auto-notify on exit —
+  re-armed for the running Andrew v3-recipe arm (37% at re-arm; 3-way eval → `_sweep_eval/andrew_recipes`).
+
+---
+
 ## 2026-07-09 (later) — T1–T8 engineering sprint, FIRST ground-truth scale validation (−0.85% / 0.42 mm), transmit live
 
 Agent-tier handoff (Opus 4.8 → Fable 5) mid-day; work continued from docs/TECH_ROADMAP.md with full
