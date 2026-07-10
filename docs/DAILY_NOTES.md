@@ -28,6 +28,26 @@ different operations with different risk profiles.
   survived via setsid). Watchers are now harness-tracked background tasks that auto-notify on exit —
   re-armed for the running Andrew v3-recipe arm (37% at re-arm; 3-way eval → `_sweep_eval/andrew_recipes`).
 
+### 3-way recipe comparison on Andrew (weak capture: 35 views / 9.9k init pts) — branch criteria VALIDATED both directions
+
+| arm | schedule/dense/isolation | subj gauss | subj mesh | roughness | wall time |
+|---|---|---|---|---|---|
+| hybrid (the accidental unified config) | fast / OFF / on | 69k | 890k v | 13.1° | ~35 min |
+| **FLAGSHIP recipe (weak branch)** | fast / ON / on | **444k** | 1.94M v | **16.5°** | ~50 min |
+| v3 recipe (strong branch, mis-applied) | quality_mid / OFF / off | 534k | 5.29M v | **29.6°** | ~3 h 45 m |
+
+- **v3-on-weak is catastrophic, not just worse**: densified 9.9k→2.48M gaussians (250× on 35 views),
+  distilled back to 652k of noise; refine pass built 13.1M faces of bumps; review renders show an
+  unrecognizable exploded mass (no isolation also lets background merge into the subject cluster).
+  4.5× the compute of the flagship arm for the worst output. Loss curve agreed (0.057 vs dense arm lower).
+- **Verdict**: capacity law confirmed from the strong side — the v3 recipe's power comes from strong
+  inputs (v1: 172v/45k, v3: 362v/117k), not from the schedule. Auto-branch routing (Andrew-class →
+  FLAGSHIP recipe) is correct; visual + quantitative evidence in `sessions/_sweep_eval/andrew_recipes/`
+  (`face_review_3way.png`, `comparison.png`, `stats.json`).
+- **Standing read on quality ordering**: flagship-recipe output is the best achievable on THIS capture;
+  the remaining gap to v1/v3-class results is capture-side (fill-frame + more views + init density) —
+  recapture guidance stands (T3 score already flags it).
+
 ---
 
 ## 2026-07-09 (later) — T1–T8 engineering sprint, FIRST ground-truth scale validation (−0.85% / 0.42 mm), transmit live
