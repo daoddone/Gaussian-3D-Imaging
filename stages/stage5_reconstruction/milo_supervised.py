@@ -273,6 +273,19 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
         else:
             print(f"[milo] WARNING: subject_isolation requested but {mask_dir} missing — run "
                   f"scripts/make_subject_masks.py first; proceeding WITHOUT isolation")
+    # Subject 3D box-prune — the designed "mop-up" half of isolation (photometric masks stop background
+    # BIRTH; hull-interior background keeps real-pixel gradients and needs REMOVAL — the Andrew block).
+    # Gated independently of the mask so mask-only / prune-only / both can be A/B'd. box.json is in
+    # METRIC units; training runs in the S-scaled dataset, so scale the box by S.
+    if bool(opt.get("subject_box_prune", False)):
+        box_json = Path(capture_dir).parent / "subject_masks" / "box.json"
+        if box_json.exists():
+            _bj = json.loads(box_json.read_text())
+            _bp = [v * S for v in _bj["box_lo"]] + [v * S for v in _bj["box_hi"]]
+            train_cmd += ["--subject_box_prune", ",".join(f"{v:.6f}" for v in _bp)]
+            print(f"[milo] subject box-prune ON: metric box.json scaled xS={S:.3f}")
+        else:
+            print(f"[milo] WARNING: subject_box_prune requested but {box_json} missing — skipping")
     if dense:
         # --dense_gaussians recovers thin structure (glasses frame, edges) the base densifier drops.
         # Tradeoff: it slightly roughens flat regions (redistribution, not a strict win). REVISIT on the
