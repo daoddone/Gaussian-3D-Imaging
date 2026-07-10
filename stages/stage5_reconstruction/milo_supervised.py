@@ -282,7 +282,9 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
         if box_json.exists():
             _bj = json.loads(box_json.read_text())
             _bp = [v * S for v in _bj["box_lo"]] + [v * S for v in _bj["box_hi"]]
-            train_cmd += ["--subject_box_prune", ",".join(f"{v:.6f}" for v in _bp)]
+            # equals-form: the value can start with a minus sign, which argparse would
+            # otherwise parse as a new flag ("expected one argument")
+            train_cmd += ["--subject_box_prune=" + ",".join(f"{v:.6f}" for v in _bp)]
             print(f"[milo] subject box-prune ON: metric box.json scaled xS={S:.3f}")
         else:
             print(f"[milo] WARNING: subject_box_prune requested but {box_json} missing — skipping")
