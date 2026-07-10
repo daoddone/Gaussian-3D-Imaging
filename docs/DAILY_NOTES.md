@@ -4,6 +4,35 @@ Running engineering journal. **Newest entry on top.**
 
 ---
 
+## 2026-07-10 (latest) — Isolation trilogy on Andrew: mask+prune (the COMPLETE designed system) wins every cut; block REMOVED at source
+
+Owner methodological catch that shaped the analysis: floaters are post-processable, so arm comparisons
+must be **reconstruction-to-reconstruction** — identical cleanup (same metric box-crop + largest
+connected component) applied to every arm BEFORE measuring. Built that harness; all numbers below are
+equal-footing (raw eval numbers conflate junk into the "subject" cluster).
+
+| arm (flagship base: fast+dense) | cleaned surface | HEAD-only | head verts | scene extent |
+|---|---|---|---|---|
+| NO isolation | 15.31° | 16.64° | 883k | 24.7 m of junk |
+| mask-only (was "recommended") | 13.74° | 14.57° | 827k | 17.7 m |
+| **mask + 3D box-prune** | **12.72°** | **13.21°** | **1.76M** | **0.7 m = the subject box** |
+
+- **No-isolation is NOT rescued by post-processing**: background shards FUSE to the subject surface
+  (largest-component keeps them — un-postprocessable), and the face itself measures ~2° rougher (budget
+  diluted into background). Masks improve the FACE, not just the scene.
+- **Mask+prune (first-ever test of the full 07-08 design):** floating block above the head GONE at
+  source; 100% of capacity inside the subject box (478k/511k subject); tet/mesh budget concentrated →
+  2.1× head surface density at the LOWEST roughness; visually the best Andrew mesh to date.
+  Evidence: `_sweep_eval/andrew_isolation/` (equal_footing_faces, head_only_3way, prune_vs_maskonly).
+- Box-prune impl notes: `--subject_box_prune` needs equals-form (leading minus breaks argparse);
+  train.py prints must go to stderr (`--quiet` safe_state silences stdout).
+- **Feet gate launched** (mask+prune vs output_hq_isolated_fast_l0, `_sweep_eval/feet_prune`): the
+  proven −58% floater win must survive before mask+prune becomes the weak-branch default.
+- Strong branch: stays proven-v3 (no isolation) pending its own gate; face regression PASS (below)
+  already re-validated that recipe on today's code.
+
+---
+
 ## 2026-07-10 (later) — Isolation archaeology + FACE REGRESSION PASSES (pipeline code is clean)
 
 **Owner-directed audit of "isolation" (the word drifted across three mechanisms):**
