@@ -37,7 +37,7 @@ EVAL            subject-centered geometry metrics; mesh roughness; photorealism 
 pays off when the capture supplies enough signal (dense, sharp, frame-filling views). On weak captures,
 extra capacity manufactures spurious detail; on strong captures it resolves real fine structure. →
 **Capture quality is the dominant lever**; no reconstruction knob substitutes for it. The pipeline
-therefore has an input-quality branch (weak → fast schedule; strong → quality schedule), auto-selected.
+therefore has an input-quality branch, auto-selected — and the branch selects the WHOLE PROVEN RECIPE, not just the schedule (owner-caught design correction 2026-07-09): weak → fast schedule + dense_gaussians TRUE (the flagship recipe — dense growth compensates sparse inits, and the VRAM/distillation case against dense was a quality-schedule finding only); strong → quality_mid + dense FALSE (the v3 recipe). Freezing per-axis settings to one side had produced an untested hybrid (fast+nondense) that underperformed both proven recipes.
 
 Corollaries proven in the campaign: (a) per-pixel supervision against a noisy depth sensor stamps sensor
 noise onto the surface → **use the depth sensor for SCALE, not surface supervision**; (b) camera poses

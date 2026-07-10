@@ -74,7 +74,7 @@ stage5:
   host: milo                              # mesh-in-the-loop learnable-SDF host (built + ready)
   milo_resolution: 1                      # full resolution (-r 1)
   data_device: cuda                       # A6000: keep data on-GPU (faster than cpu)
-  dense_gaussians: false          # dense retired (distillation makes it moot; VRAM explosive at capacity)
+  dense_gaussians: auto           # BRANCH-COUPLED (owner-caught unification error): weak/fast -> TRUE (flagship recipe), strong/quality -> FALSE (v3 recipe + VRAM limit)
   depth_lambda: 0.0               # LiDAR = scale anchor only (surface supervision retired)
   imp_metric: indoor                      # close-range objects
   milo_crop_pad: 0.10

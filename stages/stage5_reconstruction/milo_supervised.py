@@ -167,7 +167,14 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
     depth_lambda = float(opt.get("depth_lambda", 0.2))
     imp_metric = opt.get("imp_metric", "indoor")
     resolution = str(opt.get("milo_resolution", 1))          # -r (1 = full res as-loaded)
-    dense = bool(opt.get("dense_gaussians", True))           # default ON (recovers thin structure)
+    # dense_gaussians supports "auto" (resolved after schedule selection below): the two PROVEN
+    # recipes used OPPOSITE dense settings — feet flagship = fast + dense TRUE (its 7x budget on a
+    # sparse init came from dense; at fast, dense never had a VRAM problem), face v3 = quality_mid +
+    # dense FALSE (the VRAM/distillation retirement was a QUALITY-schedule finding). Unification
+    # design error (owner-caught 2026-07-09): freezing dense to one side produced an untested hybrid
+    # (fast+nondense) on weak captures. "auto" couples the setting to the branch's proven recipe.
+    dense_raw = opt.get("dense_gaussians", True)
+    dense = dense_raw if isinstance(dense_raw, bool) else (str(dense_raw).lower() != "false")
     data_device = str(opt.get("data_device", "cpu"))         # "cpu" fits the A4000; "cuda" is faster on the A6000
     mesh_reg = bool(opt.get("mesh_regularization", True))    # in-loop mesh (MILo's core); off = cloud-only
 
@@ -205,6 +212,12 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
             opt["mesh_config"] = "quality_mid"
         print(f"[milo] AUTO capacity: views={_imgs_n} init_pts={_pts_n} -> "
               f"{'STRONG' if _strong else 'WEAK'} capture -> schedule={opt['milo_schedule']}")
+
+    # Branch-coupled dense (see comment at dense_raw): weak/fast -> TRUE (flagship recipe: aggressive
+    # growth compensates the sparse init); strong/quality -> FALSE (v3 recipe + the real VRAM limit).
+    if str(dense_raw).lower() == "auto":
+        dense = str(opt.get("milo_schedule", "fast")) == "fast"
+        print(f"[milo] AUTO dense_gaussians -> {dense} (branch-coupled to schedule)")
 
     # 1) scene scale -> ~unit range for the rasterizer
     radius = _nerf_radius(dataset_dir / "sparse" / "0")

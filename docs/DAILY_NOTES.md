@@ -77,6 +77,17 @@ crop shares the coarse mask's root; (4) one config delta vs the feet flagship: d
 (recommended) vs true (flagship) — minor, testable. REMEDY = tonight's protocol-compliant fill-frame
 capture; then re-judge the mask.
 
+**UNIFICATION DESIGN ERROR (owner-caught, root of the Andrew quality gap):** the two proven
+recipes used OPPOSITE settings on two axes (face v3: quality_mid + dense OFF + isolation OFF; feet
+flagship: fast + dense ON + isolation ON). The unified pipeline_recommended froze dense to the FACE
+side and isolation to the FEET side while making only the schedule adaptive → weak captures got an
+UNTESTED hybrid (fast + nondense + isolation) matching neither proven recipe. Andrew's 93k gaussians
+vs the flagship's 679k is largely this. FIX: `dense_gaussians: auto` is now BRANCH-COUPLED (weak/fast
+→ TRUE, strong/quality → FALSE). Isolation stays ON in both branches (its controlled A/B showed zero
+quality cost + real floater benefit) — the remaining divergence from v3's recipe, tracked with the
+mask-coarseness item (T9). Empirical confirmation: the flagship-parity dense A/B on Andrew's capture
+is running; its delta vs the nondense run quantifies the error's size.
+
 **Mask-robustness note (owner skepticism, on record):** the geometric mask on the Andrew face session
 keeps head+torso+near context and cuts far background (coverage 0.58 median) — coarse-but-safe by
 design (fails open, never cuts subject). Adequate for floater/background suppression; NOT a tight
