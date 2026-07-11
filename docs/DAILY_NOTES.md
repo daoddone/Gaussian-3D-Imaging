@@ -4,6 +4,40 @@ Running engineering journal. **Newest entry on top.**
 
 ---
 
+## 2026-07-11 — nvdiffrast 2048 cap ROOT-CAUSED to our own backend patch; GL backend restored; full MILo usage audit
+
+**The -r halving was self-inflicted (third accidental-default finding).** Upstream MILo defaults to
+nvdiffrast's **OpenGL** rasterizer (no resolution cap, 8-bit subpixel). On 07-03 GL failed on this box
+and we patched `use_opengl=False` → CUDA backend → its 2048-px internal cap → `milo_supervised` caps
+`-r` → 12MP captures train at 2016px. TODAY'S FINDING: the 07-03 failure was **missing libglvnd-dev
+HEADERS** (runtime NVIDIA EGL was always present; open3d renders EGL daily). Headers installed →
+`RasterizeGLContext` creates, rasterizes AND backprops at 4032×3024. `mesh.py` now env-gated:
+`MILO_USE_OPENGL=1` restores upstream GL (default still CUDA until validated). Historic crash repro
+(checkpoint-8000 mesh rebuild at -r1/4032, the exact CUDA-700 site) running under GL — watcher armed.
+Also confirmed from nvdiffrast 0.3.3 docs: the CUDA backend officially supports >2048 via auto multi-
+invocation since 0.3.3 — our recorded 4032 crash therefore = a build/arch bug in that tiled path
+(TORCH_CUDA_ARCH_LIST unset at JIT compile is the suspect), NOT a design limit.
+
+**MILo usage audit (owner-directed; "second missed default" concern — found a third):**
+- Our deviations from upstream, all now justified/documented: CUDA context (above; env knob added),
+  `2^22` triangle chunking (upstream's own 2^24 guard overflows its SUBTRIANGLE buffer on our 12M-face
+  meshes — our patch necessary), retention knob (edit-record-verified parity), flag-gated additions
+  (isolation/flatness/box-prune — inert by default).
+- **Missed upstream recommendation #3: `--decoupled_appearance`** — README explicitly recommends it
+  for exposure variation; iPhone auto-exposure varies through every orbit we capture; we never enable
+  it. Geometry stops paying for exposure shifts; texture bake unaffected (samples raw source frames).
+  → A/B on the next strong capture.
+- `--depth_order` (DepthAnythingV2 depth-order regularization): upstream option, off by default, we
+  don't use. OWNER DECISION needed: generic monocular-depth prior (not an anatomy prior) — potentially
+  strong help on weak captures, but adjacent to the no-priors principle.
+- Hygiene: weak branch relies on implicit `--config_path ./configs/fast` default (root-cause-#2 family;
+  pass explicitly). MILo's inherited 3DGS loader targets ~1600px width; even 2016 exceeds the paper's
+  tested envelope — GL-at-full-res leaves it further; validate empirically, don't assume.
+- Unused MILo capabilities worth knowing: **Blender addon** (mesh review/editing of MILo outputs),
+  their render/metrics eval scripts (we built equivalents), VGGT pose path (we have SfM).
+
+---
+
 ## 2026-07-10 (latest) — Isolation trilogy on Andrew: mask+prune (the COMPLETE designed system) wins every cut; block REMOVED at source
 
 Owner methodological catch that shaped the analysis: floaters are post-processable, so arm comparisons
