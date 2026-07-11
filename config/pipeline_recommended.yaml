@@ -79,7 +79,10 @@ stage5:
   imp_metric: indoor                      # close-range objects
   milo_crop_pad: 0.10
   milo_schedule: auto             # capacity matched to capture strength automatically (THE LAW)
-  subject_isolation: true         # photometric mask + opacity penalty (floaters -58%, no quality cost)
+  subject_isolation: auto         # BRANCH-COUPLED (07-10 trilogy): weak/fast -> ON, strong/quality -> OFF (proven v3 recipe)
+  subject_box_prune: auto         # BRANCH-COUPLED with isolation: weak -> COMPLETE designed system (mask + 3D mop-up prune).
+                                  # Equal-footing evidence: Andrew head 13.21 vs 14.57 deg + block removed at source;
+                                  # feet gate holds (12.33 vs 12.21 deg at 2.9x surface density).
 
 paths:
   sessions_root: sessions

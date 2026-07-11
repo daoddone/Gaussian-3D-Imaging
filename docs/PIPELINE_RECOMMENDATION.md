@@ -23,13 +23,15 @@ Campaign scope: ~20 reconstruction runs, 2 subjects × 2 capture methods, 7 root
                         NEVER per-pixel depth supervision (retired: worst arm in all 8 cells).
 
 5. RECONSTRUCTION       MILo, mesh reg ON, scalable renderer (2^22 chunks), -r capped ≤2048,
-                        depth_lambda = 0, dense off, SUBJECT ISOLATION ON
-                        (scripts/make_subject_masks.py → photometric mask + opacity penalty).
-                        SCHEDULE MATCHED TO INPUT QUALITY:
-                          • strong capture (fill-frame, 150+ sharp views): quality_mid (or quality)
-                          • weak/legacy capture (standoff, sparse frames):  fast
+                        depth_lambda = 0. SCHEDULE MATCHED TO INPUT QUALITY:
+                          • strong capture (fill-frame, 150+ sharp views): quality_mid,
+                            dense OFF, isolation OFF            (= the proven v3 recipe)
+                          • weak/legacy capture (standoff, sparse frames): fast, dense ON,
+                            COMPLETE ISOLATION SYSTEM ON (photometric mask + opacity penalty
+                            + 3D box-prune mop-up; scripts/make_subject_masks.py + box.json)
                         [THE LAW: capacity must match input quality — excess capacity on weak
-                         inputs manufactures junk detail regardless of every other setting]
+                         inputs manufactures junk detail regardless of every other setting.
+                         dense/isolation/prune are BRANCH-COUPLED ("auto") — 07-10 trilogy.]
 
 6. OUTPUT               metric splat (view-dependent, the appearance deliverable)
                         + metric mesh (geometry deliverable; texture-baking = backlogged polish)
@@ -41,7 +43,8 @@ Campaign scope: ~20 reconstruction runs, 2 subjects × 2 capture methods, 7 root
 |---|---|
 | LiDAR surface supervision harms; worse with capacity | λ0.2→0: −5.3°/−3.7° (fast, both paths); at capacity λ0.2 ≈ 33-35° both paths |
 | λ≈0.05 "whisper" unnecessary | R6a: 33.5° (no benefit); isolation solves floaters better |
-| Subject isolation: adopt | floater axis 6.6→2.8 m (−58%), −14% gaussians, roughness unchanged (14.78→14.50), subject visually intact |
+| Subject isolation: adopt (weak branch) | floater axis 6.6→2.8 m (−58%), −14% gaussians, roughness unchanged (14.78→14.50), subject visually intact |
+| Complete isolation = mask + 3D box-prune (07-10) | equal-footing: Andrew head 13.21° vs 14.57° (mask-only) vs 16.64° (none), hull-fill block removed AT SOURCE, 100% capacity in-box; feet gate holds (12.33° vs 12.21° at 2.9× density). Strong branch: NO isolation (v3 recipe; face regression 11.6° reproduces historic best) |
 | Capacity law | feet: fast-λ0 = 14.5-15.8° w/ visible toes vs qualmid ≈32-33° (both λ, both paths); face: capacity → +27-47% verts, real stubble relief |
 | Poses solved; SfM universal | 100% registration everywhere (0.72-1.5 px); 3 methods agree 1-2 mm |
 | Metric-through-poses | subject dims agree ≤2% across λ arms; anchor lock 1.0% MAD |

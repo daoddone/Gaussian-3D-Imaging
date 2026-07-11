@@ -26,10 +26,14 @@ equal-footing (raw eval numbers conflate junk into the "subject" cluster).
   Evidence: `_sweep_eval/andrew_isolation/` (equal_footing_faces, head_only_3way, prune_vs_maskonly).
 - Box-prune impl notes: `--subject_box_prune` needs equals-form (leading minus breaks argparse);
   train.py prints must go to stderr (`--quiet` safe_state silences stdout).
-- **Feet gate launched** (mask+prune vs output_hq_isolated_fast_l0, `_sweep_eval/feet_prune`): the
-  proven −58% floater win must survive before mask+prune becomes the weak-branch default.
-- Strong branch: stays proven-v3 (no isolation) pending its own gate; face regression PASS (below)
-  already re-validated that recipe on today's code.
+- **Feet gate: PASS** (`_sweep_eval/feet_prune`): subject mesh 14.26° vs 14.50°; equal-footing cleaned
+  surface 12.33° vs 12.21° (statistical tie) at **2.9× density**; cloud confined to the subject box
+  (0.8 m vs 2.5–4.6 m). The proven feet win survives with the prune.
+- **POLICY FLIPPED (config/pipeline_recommended.yaml + milo_supervised):** `subject_isolation: auto` +
+  `subject_box_prune: auto`, branch-coupled like dense — weak/fast → COMPLETE isolation system ON;
+  strong/quality → both OFF (the proven v3 recipe verbatim). Explicit true/false still respected for
+  A/Bs. PIPELINE_RECOMMENDATION.md §5 + evidence chain updated. Natalie plan: branch default (strong →
+  v3 recipe) + one mask+prune comparison arm to earn strong-branch evidence.
 
 ---
 

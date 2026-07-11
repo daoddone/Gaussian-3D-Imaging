@@ -219,6 +219,22 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
         dense = str(opt.get("milo_schedule", "fast")) == "fast"
         print(f"[milo] AUTO dense_gaussians -> {dense} (branch-coupled to schedule)")
 
+    # Branch-coupled isolation (2026-07-10 trilogy, all equal-footing): weak/fast -> mask+prune ON
+    # (Andrew: head 13.21° vs 14.57°, block removed at source; feet gate: 12.33° vs 12.21° at 2.9x
+    # density — the proven win holds). strong/quality -> OFF (the proven v3 recipe used neither; no
+    # strong-capture evidence yet — earn it via an A/B before flipping).
+    _iso = opt.get("subject_isolation", False)
+    _bp_opt = opt.get("subject_box_prune", False)
+    if str(_iso).lower() == "auto" or str(_bp_opt).lower() == "auto":
+        _weak = str(opt.get("milo_schedule", "fast")) == "fast"
+        opt = dict(opt)
+        if str(_iso).lower() == "auto":
+            opt["subject_isolation"] = _weak
+        if str(_bp_opt).lower() == "auto":
+            opt["subject_box_prune"] = _weak
+        print(f"[milo] AUTO isolation -> mask={opt['subject_isolation']} box_prune={opt['subject_box_prune']} "
+              f"(branch-coupled: weak=complete isolation system, strong=proven v3 recipe)")
+
     # 1) scene scale -> ~unit range for the rasterizer
     radius = _nerf_radius(dataset_dir / "sparse" / "0")
     S = float(opt.get("milo_scale", 0.0)) or max(1.0, 1.0 / max(radius, 1e-6))
