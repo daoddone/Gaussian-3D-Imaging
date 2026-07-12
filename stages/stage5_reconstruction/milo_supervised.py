@@ -182,19 +182,23 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
     # resolution exceeds that (the HQ-Depth 4032x3024 path) triggers a CUDA-700 illegal address in
     # nvdiffrast's fineRasterKernel at the first mesh build (iter 8001) — reproducible, pose- AND
     # density-independent; ARKit's 1920x1440 is under the cap and unaffected. (v0.3.3's >2048 auto-tiling
-    # fails on this compiled build.) This is a HARD rasterizer limit, not a quality knob: cap the training
-    # resolution so max(w,h) <= 2048 whenever mesh regularization is on. Logged for transparency. As a
-    # side benefit it equalizes render resolution vs the ARKit path (2016 vs 1920) for a fair comparison.
-    if mesh_reg:
+    # fails on this compiled build.) The cap belongs to the CUDA rasterizer BACKEND — 07-11 finding: the
+    # 07-03 "headless has no GL" diagnosis was missing libglvnd-dev headers, and upstream MILo's default
+    # OpenGL backend has NO resolution cap (validated: 12MP forward+backward + 1,100+ stable in-loop
+    # iters at 4032 on the historic crash checkpoint). milo_use_opengl=true selects GL and skips the cap.
+    use_gl = bool(opt.get("milo_use_opengl", False))
+    if mesh_reg and not use_gl:
         _cams = colmap_io.read_cameras_binary(Path(dataset_dir) / "sparse" / "0" / "cameras.bin")
         _max_side = max(max(int(c["width"]), int(c["height"])) for c in _cams.values())
         _r = int(resolution)
         while _max_side / _r > 2048 and _r < 8:
             _r *= 2
         if _r != int(resolution):
-            print(f"[milo] nvdiffrast 2048 mesh-raster cap: capture {_max_side}px at -r {resolution} exceeds "
-                  f"2048 -> using -r {_r} (~{_max_side // _r}px) so the in-loop mesh rasterizes")
+            print(f"[milo] nvdiffrast 2048 mesh-raster cap (CUDA backend): capture {_max_side}px at "
+                  f"-r {resolution} exceeds 2048 -> using -r {_r} (~{_max_side // _r}px)")
             resolution = str(_r)
+    elif mesh_reg and use_gl:
+        print(f"[milo] OpenGL mesh-raster backend (MILO_USE_OPENGL=1): no resolution cap, training at -r {resolution}")
 
     # AUTO capacity selection (owner mandate: any capture processed to its best capacity without
     # per-capture tuning). THE LAW from the quality campaign: capacity must match input quality —
@@ -264,8 +268,9 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
     # granularity. "quality" = MILo/3DGS stock: 30k iters, densify until 15k, simp 15k/20k, mesh reg
     # 20k->30k (use with mesh_config "quality"). NOTE: config-file values OVERRIDE CLI args in MILo.
     schedule = str(opt.get("milo_schedule", "fast"))
-    if schedule and schedule != "fast":
-        train_cmd += ["--config_path", f"./configs/{schedule}"]
+    # ALWAYS pass config_path explicitly — relying on train.py's implicit ./configs/fast default is the
+    # exact "invisible schedule" failure class from root-cause #2 (07-11 audit hygiene fix).
+    train_cmd += ["--config_path", f"./configs/{schedule}"]
     # Distillation retention percentile (T8): the DIRECT final gaussian/vertex-count control
     # (0.99 = stock; e.g. 0.995 keeps ~2x more through simp1/simp2 for strong captures).
     _ret = float(opt.get("simp_retention", 0.99))
@@ -309,6 +314,14 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
         # Tradeoff: it slightly roughens flat regions (redistribution, not a strict win). REVISIT on the
         # A6000 — tune MILo's regularizers + add feature-preserving smoothing (docs/EXPERIMENTS_BACKLOG.md).
         train_cmd.append("--dense_gaussians")
+    # Per-image appearance embedding (upstream-recommended for exposure variation — iPhone auto-exposure
+    # drifts through every orbit). Absorbs exposure shifts so geometry stops paying for them; the color
+    # bake is unaffected (it samples raw source frames). 07-11 audit finding #3; default off until A/B'd.
+    if bool(opt.get("decoupled_appearance", False)):
+        train_cmd.append("--decoupled_appearance")
+        print("[milo] decoupled appearance ON (per-image exposure embedding)")
+    if use_gl:
+        env["MILO_USE_OPENGL"] = "1"   # scene/mesh.py selects RasterizeGLContext (training + extraction)
     # In-loop mesh regularization is MILo's core feature, but its nvdiffrast rasterization crashes
     # (CUDA 700) reproducibly for the pose-free (DA3-estimated-pose) path at the simplification step —
     # the mesh degenerates during training. Disable it there to still get the gaussian cloud (the

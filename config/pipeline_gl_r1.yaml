@@ -1,0 +1,87 @@
+# RECOMMENDED pipeline config (quality campaign 2026-07-09, docs/PIPELINE_RECOMMENDATION.md):
+#
+# Same stage graph as config/pipeline.yaml, but every A4000 (16 GB) memory cap is
+# lifted and Stage 5 uses the full-resolution, dense, GPU-resident MILo host:
+#   * Stage 2: ALL frames (no 48-frame OOM cap), fp32.
+#   * Stage 5: host=milo, full res (-r 1), data_device=cuda, dense_gaussians on.
+#
+# ONE config works for both captures:
+#   * ARKit capture (has capture/poses.json): pose_conditioning activates -> exact metric poses.
+#   * HQ-Depth capture (no poses.json): pose_conditioning auto-skips (stage2 gate at run.py:112),
+#     falling back to use_ray_pose (DA3 estimates poses via unseeded ray-pose).
+#
+# Run per stage (the pipeline_stage3/5 conda envs are not built on this box; Stage 3 runs in
+# system python, Stage 5's milo host subprocesses to the `milo` env):
+#   conda run -n pipeline_stage2_frontend python stages/stage2_frontend/run.py --session S --config THIS
+#   python3 stages/stage3_metric/run.py       --session S --config THIS
+#   python3 stages/stage5_reconstruction/run.py --session S --config THIS
+
+stages:
+  stage2_frontend:
+    enabled: true
+    env: pipeline_stage2_frontend
+    entry: stages/stage2_frontend/run.py
+  stage3_metric:
+    enabled: true
+    env: pipeline_stage3_metric
+    entry: stages/stage3_metric/run.py
+  stage4_normals:
+    enabled: false                        # StableNormal env not built on this box
+    env: pipeline_stage4_normals
+    entry: stages/stage4_normals/run.py
+  stage5_reconstruction:
+    enabled: true
+    env: pipeline_stage5_reconstruction
+    entry: stages/stage5_reconstruction/run.py
+
+stage2:
+  model: DA3NESTED-GIANT-LARGE
+  use_ray_pose: true                      # HQ capture (no poses) -> DA3 estimates poses
+  free_geometry_refinement: false
+  pose_conditioning: true                 # ARKit capture -> exact metric poses; auto-skips w/o poses.json
+  bf16: false                             # fp32; 48 GB fits the full frame set
+  export_formats: [ply, npz]
+  max_frames: null                        # ALL frames (A6000 has the VRAM)
+
+stage3:
+  agreement_threshold_percent: 3.0
+  min_depth_inlier_fraction: 0.30
+  depth:
+    min_valid_depth_m: 0.05
+    max_valid_depth_m: 5.0
+    ransac_iterations: 200
+    ransac_inlier_tol: 0.10
+    fit_offset: false
+  icp:
+    enabled: true                         # skips gracefully if open3d absent
+    max_correspondence_distance_m: 0.02
+    max_iterations: 50
+  colmap:
+    bake_points: true
+    max_points: 100000
+  ruler:
+    known_size_meters: null
+  # Annotate a scale flag but DON'T halt — for evaluation we want the reconstruction regardless
+  # (close-range feet captures may trip the near-field LiDAR scale flag; that's expected).
+  flag_halts_pipeline: false
+
+stage4:
+  model: StableNormal_turbo
+  fixed_weight: 0.05
+  confidence_tied_weight: false
+
+stage5:
+  host: milo                              # mesh-in-the-loop learnable-SDF host (built + ready)
+  milo_resolution: 1                      # full resolution (-r 1)
+  data_device: cuda                       # A6000: keep data on-GPU (faster than cpu)
+  dense_gaussians: auto           # BRANCH-COUPLED (owner-caught unification error): weak/fast -> TRUE (flagship recipe), strong/quality -> FALSE (v3 recipe + VRAM limit)
+  depth_lambda: 0.0               # LiDAR = scale anchor only (surface supervision retired)
+  imp_metric: indoor                      # close-range objects
+  milo_crop_pad: 0.10
+  milo_schedule: auto             # capacity matched to capture strength automatically (THE LAW)
+  subject_isolation: auto         # BRANCH-COUPLED (07-10 trilogy): weak/fast -> ON, strong/quality -> OFF (proven v3 recipe)
+  subject_box_prune: auto
+  milo_use_opengl: true          # ARM B/C: upstream GL backend -> NO 2048 cap -> 12MP trains at -r1 (validated 07-11)
+
+paths:
+  sessions_root: sessions
