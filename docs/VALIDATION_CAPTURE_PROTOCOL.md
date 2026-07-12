@@ -1,4 +1,21 @@
-# Validation capture protocol (owner, ~45–60 min total) — metric-accuracy dataset + T16 dry-runs
+# Validation capture protocol — metric-accuracy dataset + T16 dry-runs
+
+## MINIMAL SET (owner-selected, ~25–30 min, 8 items) — the get-off-the-ground batch
+Zip: `validation_min_<date>.zip`. "Orbit" = smooth 120–180° FRONT arc (like the historic face
+captures; never behind). Sheet flat + visible in every capture. App = arkit4K + LiDAR, 20–40 s
+(locked-landscape app recording is the designed behavior — fine). Videos 30–60 s.
+- `P1_app4k_<objA>_mid_bright/` ~0.5 m, RULER in frame
+- `P1_vid_<objA>_mid_bright_4K.mov` same scene: 4K/30, HDR off, landscape preferred
+- `P2_app4k_<objB>_close_bright/` ~0.3 m, second object
+- `P2_vid_<objB>_close_bright_DEFAULT.mov` same scene: FACTORY DEFAULTS untouched (portrait is fine/wanted)
+- `P2_vid_..._DEFAULT_RESENT.mov` the default video sent to yourself via WhatsApp/email, received copy
+- `S1_app4k_<objA>_far_bright/` ~1 m (far-margin probe)
+- `S2_app4k_<objA>_mid_dim/` dim light
+- `S3_app4k_<objA>_mid_bright_FAST/` brisk orbit
+Plus the 10-second print check first (bar 100 mm horizontal; a marker square 50 mm VERTICAL).
+Full 15-item version below for a later, more generous session.
+
+# FULL protocol (~45–60 min) — the complete matrix
 
 Scale validation needs NO reconstruction: each capture costs ~10 CPU-minutes server-side
 (SfM -> anchor -> marker check). Send everything via Transmit (app) or any file drop (videos).
