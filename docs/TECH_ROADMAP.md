@@ -182,6 +182,16 @@ the settled metric strategy and needs none of these). Kept as notes for future r
   worth reusing on the reference-scan day even sooner.)
 - **T14. Validation habits** (Cho & Woo, fcomp.2026.1755361): per-axis anisotropic-scale sanity check;
   report ABSOLUTE median error (not %) for thin features. Cheap; fold into T2 when built.
+- **T15. Burst economics: wake-on-capture / sleep-when-idle** (owner-proposed 07-11; DEFERRED until the
+  pipeline is recipe-stable — explicitly NOT while active development needs the box on). ~$2/h A6000
+  runs 24/7 ≈ $1.4k/mo vs 1–5 GPU-h per capture → auto on/off ≈ $150–300/mo, no accuracy impact.
+  Design sketch: (a) WAKE — the receiver lives on this box, so an off box can't hear uploads; either
+  app-initiated wake (capture app calls the Paperspace start-machine API, waits ~1–3 min boot, then
+  transmits — simplest, no new infra) or a tiny always-on relay / object-storage drop that the box
+  ingests on boot (most robust). (b) SLEEP — idle-shutdown systemd timer with four interlocks: active
+  SSH/desktop session, any pipeline process alive (run.py/train.py/watchers), a manual keepalive
+  hold-file, and N-minute empty-queue dwell. The interlocks are what make "forced off while coding"
+  impossible; build only after unattended end-to-end runs are routine.
 - **Feed-forward geometry notes (future reference, not priority):** VGGT (2503.11651), MASt3R
   (2406.09756), π³ (2507.13347), MoGe-2 (2507.02546) — all up-to-scale or in-domain-metric; would need
   our sensor anchor anyway. See MEASUREMENT_LITERATURE.md. Only revisit if the no-depth-sensor case
