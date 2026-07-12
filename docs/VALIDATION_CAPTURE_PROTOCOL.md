@@ -26,8 +26,17 @@ camera-app video of the same scene (sheet in view). One of these deliberately ca
 ## 3. Mini mode-matrix (feeds T5) — 1 scene
 Same scene, same lighting, back-to-back: arkit1080 session + arkit4K session + native video.
 
-## Numbering/notes
-A one-line note per capture (object, distance, lighting, anything odd) — text or filenames is fine.
+## The exact manifest (15 items, one zip: validation_batch_<date>.zip)
+Naming: `<ID>_<type>_<object>_<dist>_<light>[_flag]`, types = app4k / app1080 / apphq / vid.
+- PRINT CHECK first (no capture): bar = 100.0 mm horizontal AND either marker square = 50.0 mm
+  measured VERTICALLY (the markers are the vertical reference; there is no vertical bar).
+- P1–P4 pairs (8 items): app4k capture then native VIDEO of the same untouched scene.
+  P1 objA ~0.5 m bright (+ruler if easy) · P2 objB ~0.3 m bright · P3 dim · P4 video SLOPPY.
+- S1–S5 solo app4k (5): S1 far ~1 m · S2 FAST orbit · S3 mixed/backlit · S4 sheet TILTED ~30°
+  (failure probe) · S5 ruler in frame.
+- T5a/T5b (2): P1's scene again as app1080 and apphq, back-to-back, same lighting.
+App settings: arkit4K + LiDAR ON, 20–40 s slow orbit, ~120–180°, sheet flat + visible throughout.
+Native camera: 4K/30 fps, HDR Video OFF, 1x main lens, Action Mode OFF, 30–60 s.
 Server-side: everything batches through SfM -> 04_metric_anchor (--marker-mm 50) -> validate_scale;
 report = agreement distribution (VIO vs marker vs LiDAR), per-axis anisotropy, abs-mm errors,
-confidence outcomes across conditions.
+confidence outcomes across conditions. NO reconstruction needed; ~10 CPU-min per item.
