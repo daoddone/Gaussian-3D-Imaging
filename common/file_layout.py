@@ -107,7 +107,15 @@ class SessionLayout:
 
     @property
     def metric_colmap(self) -> Path:
-        return self.metric / "colmap" / "sparse" / "0"
+        # Two metric layouts exist: legacy Stage-3 `metric/` and the T1/T16 anchor's `metric_sfm/`
+        # (session_sfm -> 04_metric_anchor flow, incl. referral videos). Prefer whichever has a model.
+        legacy = self.metric / "colmap" / "sparse" / "0"
+        if (legacy / "images.bin").exists():
+            return legacy
+        anchor = self.root / "metric_sfm" / "colmap" / "sparse" / "0"
+        if (anchor / "images.bin").exists():
+            return anchor
+        return legacy
 
     @property
     def metric_scale_report(self) -> Path:

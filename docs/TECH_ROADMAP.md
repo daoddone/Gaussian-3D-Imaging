@@ -174,14 +174,16 @@ the settled metric strategy and needs none of these). Kept as notes for future r
   the measurement additions* — measures on splat renderings (beats mesh readout on thin/sharp features)
   and adds a per-measurement error ellipsoid we lack. REVISIT candidate. BUT its evidence is drone-scale
   → must pass the scale-transfer caveat (close-range pilot) before adoption.
-- **T12. AMB3R metric cross-check** (arXiv:2511.20343). Deferred: only valuable as a NO-LiDAR fallback
-  (e.g. a clinician has an old video without depth). Since LiDAR is expected available, not needed now.
-- **T13. Surface-aware metrics + reference-scan validation protocol** (Wound3DAssist, arXiv:2508.17635):
-  geodesic length/width, area-by-triangle, depth-as-surface-deviation; Chamfer/Hausdorff/Normal-Consistency
-  vs a reference scan. Adopt only if scope grows beyond linear distances. (The validation protocol is
-  worth reusing on the reference-scan day even sooner.)
-- **T14. Validation habits** (Cho & Woo, fcomp.2026.1755361): per-axis anisotropic-scale sanity check;
-  report ABSOLUTE median error (not %) for thin features. Cheap; fold into T2 when built.
+- **T12. AMB3R metric cross-check** (arXiv:2511.20343). Deferred — and largely SUPERSEDED by T16
+  (07-12): the no-LiDAR clinician-video case is now served by the marker-primary anchor (validated
+  −0.17% on an independent physical distance). Revisit only for marker-less legacy footage.
+- **T13. Surface-aware metrics + reference-scan validation protocol** — protocol WRITTEN 07-12
+  (`docs/REFERENCE_SCAN_PROTOCOL.md`: turnkey Vectra-day checklist, capture arms, ICP-without-scale
+  analysis plan, success criteria, failure planning). EXECUTION = clinical final gate (Tepole).
+  Metric implementations (Chamfer/Hausdorff/geodesic) land with the analysis scripts on that day.
+- **T14. Validation habits — ✅ SHIPPED via T2** (verified 07-12: validate_scale.py already reports
+  per-axis u/v scales + anisotropy % + ABSOLUTE mm errors alongside %; owl real-capture numbers:
+  anisotropy 0.70%, median abs 0.27 mm).
 - **T16. Referral-video path: native-camera ingest + marker-primary metric anchor** (owner-approved
   07-12; enables clinician-submitted videos with NO app). (a) ingest adapter: .mp4/.mov -> frame
   extraction -> standard session layout (SfM + two-tier sharpness already handle arbitrary frames —

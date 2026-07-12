@@ -52,8 +52,10 @@ def ensure_chain(sess: Path, do_recon: bool) -> dict:
     if sidecar.exists():
         sc = json.loads(sidecar.read_text())
         facts["scale"] = sc.get("scale")
-        facts["primary"] = sc.get("primary")
-        facts["agreement_pct"] = sc.get("agreement_pct")
+        facts["primary"] = sc.get("primary_anchor")
+        facts["agreement_pct"] = sc.get("anchor_agreement_pct")
+        if facts["agreement_pct"] is None:
+            facts["agreement_pct"] = sc.get("marker_agreement_pct")
         facts["confidence"] = sc.get("confidence")
         rv = sc.get("reference_validation")
         if rv:
