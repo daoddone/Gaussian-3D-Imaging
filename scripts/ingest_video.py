@@ -33,6 +33,12 @@ def main():
     cap = cv2.VideoCapture(str(vid))
     if not cap.isOpened():
         raise SystemExit(f"[ingest] cannot open {vid}")
+    # iPhone portrait videos are landscape-native + rotation METADATA; make auto-rotation explicit
+    # (default in recent OpenCV builds, but a sideways ingest would silently wreck SfM/marker work).
+    try:
+        cap.set(cv2.CAP_PROP_ORIENTATION_AUTO, 1)
+    except Exception:
+        pass
     n_src = int(cap.get(cv2.CAP_PROP_FRAME_COUNT)) or 0
     fps = cap.get(cv2.CAP_PROP_FPS) or 0.0
     W = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))

@@ -31,7 +31,11 @@ Naming: `<ID>_<type>_<object>_<dist>_<light>[_flag]`, types = app4k / app1080 / 
 - PRINT CHECK first (no capture): bar = 100.0 mm horizontal AND either marker square = 50.0 mm
   measured VERTICALLY (the markers are the vertical reference; there is no vertical bar).
 - P1–P4 pairs (8 items): app4k capture then native VIDEO of the same untouched scene.
-  P1 objA ~0.5 m bright (+ruler if easy) · P2 objB ~0.3 m bright · P3 dim · P4 video SLOPPY.
+  P1 objA ~0.5 m bright (+ruler if easy), video = 4K/30, HDR off, landscape (best case).
+  P2 objB ~0.3 m bright, video = FACTORY DEFAULTS untouched (1080p/30, HDR on, PORTRAIT —
+  the realistic clinician case). P3 dim, default settings. P4 default settings + SLOPPY.
+- P2_RESENT (+1 item, ~1 min): send P2's video to yourself through a REAL channel (email or
+  WhatsApp) and include the received copy — tests transit recompression clinicians will hit.
 - S1–S5 solo app4k (5): S1 far ~1 m · S2 FAST orbit · S3 mixed/backlit · S4 sheet TILTED ~30°
   (failure probe) · S5 ruler in frame.
 - T5a/T5b (2): P1's scene again as app1080 and apphq, back-to-back, same lighting.
