@@ -42,6 +42,96 @@ from stages.stage3_metric import align                   # noqa: E402
 DMIN, DMAX = 0.15, 3.0        # usable LiDAR range (near-field bias below ~0.25 m — tracked below)
 
 
+def marker_anchor(sess: Path, imgs, cams, marker_mm: float):
+    """anchor C — ArUco marker of KNOWN size (T16): PRIMARY for external videos (no VIO/LiDAR).
+
+    Detects DICT_4X4_50 corners on the model's source frames, triangulates each corner across
+    views in the GAUGE-FREE model (validate_scale's robust DLT, 0.27 mm median demonstrated when
+    used as a checker), and sets S = known_size / measured_gauge_size (meters convention, matching
+    vio/lidar anchors). The marker VALIDATES app captures; it SETS scale only when sensors are absent
+    or --anchor marker is forced.
+    """
+    out = {"available": False, "method": "aruco_marker_dlt"}
+    import cv2
+    sys.path.insert(0, str(REPO / "scripts"))
+    from validate_scale import projection_matrix, triangulate_robust  # noqa: E402
+
+    imdir = None
+    for cand in (sess / "sfm_images", sess / "capture" / "rgb"):
+        if cand.exists():
+            imdir = cand
+            break
+    if imdir is None:
+        out["note"] = "no image dir (sfm_images/ or capture/rgb)"
+        return out
+
+    dic = cv2.aruco.getPredefinedDictionary(cv2.aruco.DICT_4X4_50)
+    det = cv2.aruco.ArucoDetector(dic, cv2.aruco.DetectorParameters())
+    # per (marker_id, corner_idx): list of (K, R, t, uv) observations across views
+    obs = {}
+    n_det_views = 0
+    for im in imgs.values():
+        p = imdir / im["name"]
+        if not p.exists():
+            continue
+        g = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
+        if g is None:
+            continue
+        corners, ids, _ = det.detectMarkers(g)
+        if ids is None or not len(ids):
+            continue
+        n_det_views += 1
+        cam = cams[im["camera_id"]]
+        fx, fy, cx, cy = [float(v) for v in cam["params"][:4]]
+        K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1.0]])
+        R = C.quat_to_rotmat(im["qvec"])
+        t = np.asarray(im["tvec"], float)
+        P = projection_matrix(K, R, t)
+        for mid, quad in zip(ids.flatten().tolist(), corners):
+            for ci in range(4):
+                obs.setdefault((mid, ci), []).append((P, quad[0][ci]))
+    if not obs:
+        out["note"] = f"no ArUco detections in {n_det_views} views"
+        return out
+
+    sides_gauge = []
+    per_marker = {}
+    mids = sorted({m for m, _ in obs})
+    for mid in mids:
+        pts3d = []
+        for ci in range(4):
+            o = obs.get((mid, ci), [])
+            if len(o) < 3:
+                pts3d = []
+                break
+            p3, _ = triangulate_robust(o)
+            if p3 is None:
+                pts3d = []
+                break
+            pts3d.append(p3)
+        if len(pts3d) != 4:
+            continue
+        q = np.asarray(pts3d)
+        s = [np.linalg.norm(q[i] - q[(i + 1) % 4]) for i in range(4)]
+        sides_gauge.extend(s)
+        per_marker[int(mid)] = {"views": len(obs[(mid, 0)]), "side_gauge_mean": float(np.mean(s))}
+    if not sides_gauge:
+        out["note"] = "markers detected but corner triangulation failed (need >=3 views/corner)"
+        return out
+
+    side_med = float(np.median(sides_gauge))
+    scatter_pct = float(100 * np.std(sides_gauge) / side_med)
+    out.update({
+        "available": True,
+        "scale": (marker_mm / 1000.0) / side_med,      # gauge -> meters, same convention as VIO/LiDAR
+        "marker_mm": marker_mm,
+        "markers": per_marker,
+        "views_with_detections": n_det_views,
+        "side_scatter_pct": scatter_pct,
+    })
+    return out
+
+
 def sfm_camera_centers(imgs):
     """{stem: center} + {stem: (R,t)} for a COLMAP images dict."""
     centers, poses = {}, {}
@@ -174,6 +264,8 @@ def main():
     ap.add_argument("--out", default="metric_sfm")
     ap.add_argument("--no-apply", action="store_true", help="sidecar only; do not write the scaled model")
     ap.add_argument("--agree-warn", type=float, default=3.0, help="agreement %% above which confidence drops")
+    ap.add_argument("--marker-mm", type=float, help="ArUco side length (mm): enables the marker anchor "
+                    "(PRIMARY for external videos without VIO/LiDAR; cross-check otherwise)")
     args = ap.parse_args()
 
     sess = (REPO / args.session) if not Path(args.session).is_absolute() else Path(args.session)
@@ -188,23 +280,32 @@ def main():
     centers, _ = sfm_camera_centers(imgs)
     vio = vio_anchor(sess, centers)
     lid = lidar_anchor(sess, imgs, pts, cams)
-    for name, a in (("VIO", vio), ("LiDAR", lid)):
+    mrk = marker_anchor(sess, imgs, cams, args.marker_mm) if args.marker_mm else \
+        {"available": False, "note": "no --marker-mm given"}
+    for name, a in (("VIO", vio), ("LiDAR", lid), ("MARKER", mrk)):
         if a["available"]:
-            extra = (f"resid={a['umeyama_residual_mm']:.1f}mm frames={a['frames_used']}"
-                     if name == "VIO" else
-                     f"MAD={a['mad_pct']:.1f}% samples={a['samples']} med_depth={a['median_sample_depth_m']:.2f}m")
+            extra = (f"resid={a['umeyama_residual_mm']:.1f}mm frames={a['frames_used']}" if name == "VIO"
+                     else f"MAD={a['mad_pct']:.1f}% samples={a['samples']} med_depth={a['median_sample_depth_m']:.2f}m"
+                     if name == "LiDAR"
+                     else f"scatter={a['side_scatter_pct']:.2f}% markers={len(a['markers'])} views={a['views_with_detections']}")
             print(f"[anchor] {name}: scale={a['scale']:.6f}  {extra}")
         else:
             print(f"[anchor] {name}: unavailable — {a.get('note')}")
 
     # ---- selection + confidence -------------------------------------------------------- #
+    # Order: VIO (sensor path, richest cross-checks) > MARKER (0.27 mm-class DLT on a printed
+    # reference) > LiDAR (ray-median; near-field bias). Marker is the designed PRIMARY for
+    # external videos, where it is the only anchor.
     notes = []
     if vio["available"]:
         primary, primary_name = vio, "vio_camera_path"
+    elif mrk["available"]:
+        primary, primary_name = mrk, "aruco_marker"
     elif lid["available"]:
         primary, primary_name = lid, "lidar_ray_median"
     else:
-        raise SystemExit("[anchor] NO metric anchor available — cannot scale this model")
+        raise SystemExit("[anchor] NO metric anchor available — cannot scale this model "
+                         "(external video needs --marker-mm with the printed sheet in frame)")
     S = primary["scale"]
 
     agreement_pct = None
@@ -219,17 +320,35 @@ def main():
         notes.append(f"VIO umeyama vs pairwise-baseline differ {vio['umeyama_vs_pairwise_pct']:.1f}% "
                      f"(possible degenerate trajectory — low motion excitation?)")
 
+    # Marker as an additional independent cross-check (or the primary, for external videos)
+    marker_agreement_pct = None
+    if mrk["available"] and primary is not mrk:
+        marker_agreement_pct = 100 * abs(mrk["scale"] - S) / S
+        if marker_agreement_pct > args.agree_warn:
+            notes.append(f"marker disagrees with {primary_name} by {marker_agreement_pct:.1f}% "
+                         f"(check the sheet's 100 mm print bar — print scaling is the usual culprit)")
+    if mrk["available"] and mrk.get("side_scatter_pct", 99) > 1.5:
+        notes.append(f"marker corner scatter {mrk['side_scatter_pct']:.2f}% (loose triangulation)")
+
     # Disagreement is only tolerable when it is ATTRIBUTABLE (near-field LiDAR bias, flagged above);
     # an unexplained cross-anchor disagreement must force human review regardless of per-anchor fit.
-    unexplained_disagreement = (agreement_pct is not None and agreement_pct > args.agree_warn
-                                and not lid.get("nearfield_warning"))
-    if vio["available"] and lid["available"] and agreement_pct <= args.agree_warn:
+    unexplained_disagreement = (
+        (agreement_pct is not None and agreement_pct > args.agree_warn
+         and not lid.get("nearfield_warning"))
+        or (marker_agreement_pct is not None and marker_agreement_pct > args.agree_warn)
+    )
+    second_anchor_agrees = (
+        (vio["available"] and lid["available"] and agreement_pct <= args.agree_warn)
+        or (marker_agreement_pct is not None and marker_agreement_pct <= args.agree_warn)
+    )
+    if second_anchor_agrees and not unexplained_disagreement:
         confidence = "high"
     elif unexplained_disagreement:
         confidence = "review"
     elif (vio["available"] and vio["umeyama_residual_mm"] < 10 and
           (vio.get("umeyama_vs_pairwise_pct") or 0) <= 1.0) or \
-         (not vio["available"] and lid["available"] and lid["mad_pct"] <= 3.0
+         (primary is mrk and mrk["side_scatter_pct"] <= 1.5 and mrk["views_with_detections"] >= 5) or \
+         (not vio["available"] and primary is lid and lid["mad_pct"] <= 3.0
           and not lid.get("nearfield_warning")):
         confidence = "medium"
     else:
@@ -271,7 +390,8 @@ def main():
         "scale": S,
         "confidence": confidence,
         "anchor_agreement_pct": agreement_pct,
-        "anchors": {"vio_camera_path": vio, "lidar_ray_median": lid},
+        "marker_agreement_pct": marker_agreement_pct,
+        "anchors": {"vio_camera_path": vio, "lidar_ray_median": lid, "aruco_marker": mrk},
         "applied": not args.no_apply,
         "notes": notes,
     }
