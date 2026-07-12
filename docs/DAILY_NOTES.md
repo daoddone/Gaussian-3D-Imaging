@@ -4,6 +4,26 @@ Running engineering journal. **Newest entry on top.**
 
 ---
 
+## 2026-07-12 (evening) — referral realism: default-settings videos validated synthetically; capture manifest finalized
+
+Owner insight: clinicians won't send 4K — factory default is 1080p/30, HDR ON, portrait, often
+transit-recompressed (WhatsApp ~720p-class). Response, same evening:
+- **Synthetic degradation study** (owl video-sim re-encoded): independent 96.00 mm check =
+  **96.10 mm (+0.10%) at 1080p** and **96.39 mm (+0.41%) at 720p + heavy JPEG-40 recompression**.
+  Corner DLT across ~55 views averages away per-frame softness; registration unaffected (66-67/72).
+  VERDICT: the 50 mm sheet suffices for default clinician videos — no 80 mm variant needed at
+  ≤0.6 m standoff. Caveats: synthetic (not true HEVC re-encode), HDR/portrait pending real dry-runs,
+  far-standoff margin probed by manifest item S1.
+- Manifest updated: P2-P4 videos = FACTORY DEFAULTS (1080p/HDR/portrait), P2_RESENT = real-channel
+  recompression item; ingest hardened with explicit orientation-auto (portrait metadata).
+- Also this block: T5 harness integration-tested + key fixes; run.py metric_sfm layout fallback;
+  T13 Vectra protocol written; T14 verified shipped-via-T2; T12 marked superseded-by-T16;
+  validation capture protocol + 15-item manifest committed for the owner's session.
+- Owner directive standing: all recipe adoptions PROVISIONAL pending joint review; decision-review
+  package assembles when tonight's chain (strong-GL flight, referral rehearsal, flatness A/B) lands.
+
+---
+
 ## 2026-07-12 (later) — T16 referral-video path BUILT + VALIDATED (owner insight: the owl unlocks it)
 
 Owner asked whether the owl+ArUco capture could unblock pipeline testing without waiting for new
