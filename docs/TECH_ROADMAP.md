@@ -182,6 +182,15 @@ the settled metric strategy and needs none of these). Kept as notes for future r
   worth reusing on the reference-scan day even sooner.)
 - **T14. Validation habits** (Cho & Woo, fcomp.2026.1755361): per-axis anisotropic-scale sanity check;
   report ABSOLUTE median error (not %) for thin features. Cheap; fold into T2 when built.
+- **T16. Referral-video path: native-camera ingest + marker-primary metric anchor** (owner-approved
+  07-12; enables clinician-submitted videos with NO app). (a) ingest adapter: .mp4/.mov -> frame
+  extraction -> standard session layout (SfM + two-tier sharpness already handle arbitrary frames —
+  proven by the photos-only face runs); (b) marker-primary mode in 04_metric_anchor: promote
+  validate_scale's multi-view ArUco triangulation (0.27 mm median demonstrated) from scale CHECKER to
+  scale SETTER when no VIO/LiDAR exists; sidecar records primary=aruco_marker + print-check status;
+  (c) DRY RUNS before offering externally: owner films 30-60 s native-camera orbit with the printed
+  sheet -> end-to-end -> verify metric OBJ + frontal quality; repeat once under worse lighting.
+  Context: Tepole follow-up offers this as his self-serve test ("send a video, get a metric mesh").
 - **T15. Burst economics: wake-on-capture / sleep-when-idle** (owner-proposed 07-11; DEFERRED until the
   pipeline is recipe-stable — explicitly NOT while active development needs the box on). ~$2/h A6000
   runs 24/7 ≈ $1.4k/mo vs 1–5 GPU-h per capture → auto on/off ≈ $150–300/mo, no accuracy impact.
