@@ -405,7 +405,7 @@ def reconstruct(dataset_dir, capture_dir, normals_dir, output_dir, options):
                             "--output-dir", str(output_dir),
                             "--colmap", str(Path(dataset_dir) / "sparse" / "0"),
                             "--images", str(Path(dataset_dir) / "images")],
-                           timeout=2400, check=False,
+                           timeout=7200, check=False,   # 12MP atlases exceed the old 2400s (GL -r1 runs)
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             if (output_dir / "export" / "mesh.obj").exists():
                 print(f"[milo] OBJ export -> {output_dir}/export/ (mesh.obj + texture + export_meta.json)")

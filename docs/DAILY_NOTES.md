@@ -4,6 +4,38 @@ Running engineering journal. **Newest entry on top.**
 
 ---
 
+## 2026-07-12 — MILo-optimal campaign VERDICTS: GL full-res + exposure embedding ADOPTED; all comparisons frontal + equal-footing
+
+Overnight campaign (arms sequential, one variable each, stage watchers reporting per-arm) — all three
+completed cleanly; judged per the owner's standing methodology (identical box-crop + largest-component
+cleanup BEFORE measuring; frontal real-capture-camera views; no junk-occluded comparisons).
+
+| arm | tests | head-only (equal-footing) | verdict |
+|---|---|---|---|
+| baseline | CUDA -r2 2016px, mask+prune | 13.21° @ 1.76M v | (07-10 best) |
+| **B: GL -r1 4032px** | resolution unlock alone | **12.90° @ 2.05M v (+17%)** | WIN — smoother AND denser; crisper texture; ~4.5x train time |
+| **C: B + exposure embedding** | decoupled_appearance at 12MP | **12.48° @ 1.89M v** | WIN — junk verts −24% (whole) vs −8% (head): embedding starves phantom background geometry, face kept |
+| **D: strong face + embedding (CUDA)** | detail-preservation risk | subj 11.90° vs 11.62° (≈ run noise) | NEUTRAL geometry, junk-suppressing (background exposure-ripples flattened), stubble/detail PRESERVED |
+
+**Adopted into pipeline_recommended (evidence-cited in-file):**
+- `milo_use_opengl: true` — weak branch PROVEN by full runs B+C (training + extraction + bake); strong
+  branch adopted on upstream-default parity + box validation; FIRST strong GL run will be watched
+  (matters most for 4032 strong captures, e.g. Natalie: avoids falling back to -r2/2016).
+- `decoupled_appearance: true` — weak win + strong no-harm + upstream recommendation; bake samples raw
+  frames so the color deliverable cannot be sanitized by the embedding.
+- OBJ export timeout 2400→7200 s (12MP atlases exceeded the old limit; arm B/C exports timed out —
+  re-running export for the new best Andrew arm `output_dense_prune_glr1_dca` in background).
+- Compute note (honest): full-res weak-branch runs cost ~4.5x (≈4.5-5 h vs ≈1 h). Accepted for clinical
+  quality; T15 (wake/sleep economics) is the cost lever, not resolution.
+- Standing caveat: Andrew is a STANDOFF capture (~31% of frame on subject) — GL's value should be LARGER
+  on protocol fill-frame captures; T5 will quantify per-mode.
+
+New best-of-session artifacts: Andrew `output_dense_prune_glr1_dca` (head 12.48°); face strong-branch
+baseline remains `output_v3_unified_20260710` with DCA variant equal (`output_v3_dca_20260711`).
+Comparisons: `_sweep_eval/milo_optimal_andrew/` + `_sweep_eval/milo_optimal_face/` (frontal JPGs + stats).
+
+---
+
 ## 2026-07-11 (later) — MILo-optimal campaign RUNNING; narrative record of options weighed and why
 
 ### The resolution question: four options were on the table, and why GL won
