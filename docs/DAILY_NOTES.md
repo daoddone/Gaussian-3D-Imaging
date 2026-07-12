@@ -4,6 +4,70 @@ Running engineering journal. **Newest entry on top.**
 
 ---
 
+## 2026-07-11 (later) — MILo-optimal campaign RUNNING; narrative record of options weighed and why
+
+### The resolution question: four options were on the table, and why GL won
+When the -r halving was traced to nvdiffrast, four fixes were weighed:
+1. **Accept the cap** (status quo): defensible only if framing fixes capture-side resolution — but it
+   permanently wastes half of every 12MP capture's supervision.
+2. **Decouple resolutions inside MILo** (photometric loss at -r1, mesh raster ≤2048): recovers full-res
+   appearance supervision without touching the rasterizer, but is invasive surgery on MILo's loss loop —
+   changes the branch balance the paper validated, and every upstream update would need re-porting.
+3. **Fix the CUDA backend's 0.3.3 auto-tiling** (officially supports >2048): plausible (suspect =
+   JIT compile with TORCH_CUDA_ARCH_LIST unset), but debugging a vendored CUDA kernel path is open-ended.
+4. **Restore upstream's OpenGL backend**: zero code risk (it is MILo's DEFAULT — we were the deviation),
+   removes the cap outright, and improves subpixel precision (8-bit vs CUDA's 4-bit).
+Option 4 was tested first because it was the cheapest to falsify — and the "headless has no GL" premise
+collapsed immediately: the failure was `ninja` missing from PATH, then missing `libglvnd-dev` HEADERS;
+the NVIDIA EGL runtime was present all along (open3d has rendered headless EGL here daily). After
+`sudo apt-get install libglvnd-dev` + `pip install ninja`: GL context creates, rasterizes AND backprops
+at 4032×3024, and the historic crash checkpoint ran 1,149 stable in-loop iterations at native 12MP
+(27.5 GB peak). Env-gated (`MILO_USE_OPENGL=1`), CUDA default retained until the A/B judges QUALITY.
+
+### The campaign design (why these three arms, and the judgment rules)
+Running overnight, sequential on the one GPU, setsid-detached with a harness watcher (pid 274190,
+`/tmp/milo_campaign.log`):
+- **Arm B — Andrew, GL -r1, mask+prune**: isolates the RESOLUTION variable on the capture whose blur
+  the owner flagged. Supervised face pixels double (626→1,253). Verified live from /proc: MILO_USE_OPENGL=1,
+  -r 1, explicit --config_path, mask+prune+dense all present. 59% at ~1.4 s/it, 22.7 GB.
+- **Arm C — Arm B + `decoupled_appearance`**: the audit's missed-recommendation #3 (upstream explicitly
+  advises it for exposure variation; iPhone auto-exposure drifts through every orbit). Stacked ON TOP of
+  B so C−B isolates the embedding's effect at the new resolution.
+- **Arm D — face v3 strong branch + `decoupled_appearance`, deliberately CUDA backend**: the strong-branch
+  test keeps ONE variable vs the fresh regression baseline (GL is a no-op at 1920px, so including it
+  would only muddy attribution).
+- **Judgment rules (owner-directed, standing):** equal-footing first (identical box-crop + largest-
+  component cleanup on every arm), then FRONTAL real-capture-camera views (frontal_compare.py) — no
+  orbit-junk comparisons, no junk-occluded views. Defaults flip only on wins; repro-passing is not
+  adoption evidence.
+- **Declined options, with reasons:** `--depth_order` (MILo ships DepthAnythingV2 as a submodule behind
+  this flag) — a monocular depth-ORDERING prior would strongly constrain weak captures, but it is a
+  learned natural-scene prior; on genuinely abnormal anatomy a misjudged ordering would pull the
+  reconstruction toward "normal-looking" — exactly what the no-priors rule exists to prevent. OWNER
+  excluded it; if ever revisited, the safe variant is ordering loss OUTSIDE the subject mask only
+  (background/floater discipline, anatomy untouched). GL-vs-CUDA speed benchmarking deferred until the
+  quality verdict (speed without quality parity is irrelevant here).
+
+### Process-discipline lessons (recorded so they aren't relearned)
+- Resume-mode tqdm counts REMAINING iterations (1150/10000 = global 9150) — the first repro watcher
+  parsed /18000 and could never fire. Parse totals from the bar itself.
+- `pkill -f <pattern>` self-matched AGAIN (killed its own shell + the watcher, exit 144). Match on
+  narrow tokens (pidfiles preferred).
+- stdout of driver scripts is block-buffered under nohup; live verification belongs on /proc/<pid>
+  (environ + cmdline), not on log grep timing.
+
+### Hardware portability analysis (owner question: cheaper machine now that GL works?)
+Short answer: GL does NOT open cheaper hardware — if anything the campaign direction needs the VRAM we
+have. The backend choice is about the GRAPHICS STACK (driver/EGL presence), not compute cost; CUDA
+backend remains the env-knob fallback for GL-hostile environments. The binding resource is VRAM:
+measured peaks — GL -r1 weak-branch 23-28 GB; strong-branch quality runs have hit 34-47 GB (dense@quality
+was REJECTED at >55 GB projected — the 48 GB card already shapes settings). A 24 GB card (4090/A5000)
+would force -r2 + capacity cuts = accuracy sacrifice; 32 GB might fit weak arms but not the strong-branch
+peaks. **Floor for zero-sacrifice: 48 GB class.** The real cost lever is instance economics (usage is
+bursty — batch sessions, on-demand/spot A6000-class rental), not a smaller GPU.
+
+---
+
 ## 2026-07-11 — nvdiffrast 2048 cap ROOT-CAUSED to our own backend patch; GL backend restored; full MILo usage audit
 
 **The -r halving was self-inflicted (third accidental-default finding).** Upstream MILo defaults to
