@@ -4,6 +4,33 @@ Running engineering journal. **Newest entry on top.**
 
 ---
 
+## 2026-07-12 (later) — T16 referral-video path BUILT + VALIDATED (owner insight: the owl unlocks it)
+
+Owner asked whether the owl+ArUco capture could unblock pipeline testing without waiting for new
+anatomy captures — yes, decisively: it is BOTH an app capture (trusted VIO scale) AND a marker capture,
+i.e. a self-validating substrate for the whole referral-video question.
+
+**Built** (`685dac2`): `scripts/ingest_video.py` (.mp4/.mov → standard session; uniform temporal
+sampling; heuristic focal init — BA refines) + marker-primary mode in `04_metric_anchor.py`
+(anchor C = ArUco corner DLT, promoted from scale CHECKER to SETTER; selection VIO > marker > LiDAR;
+marker cross-agreement feeds confidence; no-flag behavior regression-identical).
+
+**Validated, three layers deep:**
+1. Setter-vs-sensor (owl, same model): marker scale agrees with VIO to **0.27%** (scatter 0.77%, 58 views).
+2. End-to-end video sim: owl frames → real compressed mp4 → ingest → SfM (67/67, blur-tier dropped 5,
+   heuristic focal converged to the true calibration within 0.1%: 1410 vs 1411) → marker-PRIMARY anchor
+   (VIO/LiDAR correctly absent; confidence "medium" single-anchor as designed).
+3. Independent physical check: inter-marker center distance (design ground truth 96.00 mm from the
+   254-dpi sheet) measured in the video-scaled model: **95.84 mm = −0.17% / 0.16 mm**.
+
+**Remaining T16 items (owner-gated, now confirmation-only):** two real handheld native-camera dry-run
+videos (good + worse lighting) — tests stabilization/autofocus/30fps factors the sim can't; then the
+clinician offer is live. True-anatomy final gates unchanged (Natalie, Vectra day).
+Also: owl session sidecar refreshed post-restore (VIO 0.045564, marker 0.27% agree, LiDAR 0.9%,
+confidence high — three-way sidecar now stored).
+
+---
+
 ## 2026-07-12 — MILo-optimal campaign VERDICTS: GL full-res + exposure embedding ADOPTED; all comparisons frontal + equal-footing
 
 Overnight campaign (arms sequential, one variable each, stage watchers reporting per-arm) — all three
