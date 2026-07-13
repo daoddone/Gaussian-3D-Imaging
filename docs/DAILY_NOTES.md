@@ -4,6 +4,32 @@ Running engineering journal. **Newest entry on top.**
 
 ---
 
+## 2026-07-13 — FIRST FIELD VALIDATION BATCH: real finding (VIO 6-8% small on close/gentle captures), caught by design; consensus policy built
+
+Owner's 4-item batch (2 app captures of small counter objects + 2 native videos, ruler in every frame):
+- **VIDEOS (the T16 real-handheld dry-runs): PASS.** 4K landscape: 143/143 registered, independent
+  96 mm check **+0.38%**. FACTORY-DEFAULT video (1080p, HDR ON, portrait): 143/143, **+0.79%** —
+  orientation/HDR handling works; the realistic clinician case is certified end-to-end.
+- **APP CAPTURES: the anchor system caught a real failure.** Both forced confidence=review: VIO
+  disagreed with marker by 6.9%/8.3%. Three-way diagnosis: **LiDAR+marker AGREE (1.2-1.4%) — VIO is
+  the outlier, ~6-8% SMALL, with internally-clean trajectory stats** (residual 1.4-2.2 mm, pairwise
+  0.2-0.3% — confidently wrong). Mechanism: small-scene, close (0.25-0.26 m), GENTLE counter orbits =
+  minimal IMU excitation = weak scale observability (the exact regime T3's excited-motion guidance
+  targets). Independent 96 mm check at VIO scale: −6.3/−7.4%; at marker scale: **+0.19/+0.35%**.
+- **Note-attribution bug found**: disagreement note blamed "near-field LiDAR bias" while LiDAR was
+  actually corroborating the marker — text predates the third anchor. (Cosmetic; review still forced.)
+- **CONSENSUS anchor policy built, flag-gated (`--anchor-policy consensus`, default fixed;
+  PROVISIONAL — owner ratifies):** with 3 anchors, an agreeing pair (≤warn) outvotes a deviant
+  (>warn); preference within pair marker>vio>lidar; deviant flagged in notes; confidence stays
+  review on conflict. Owl regression: all-agree -> identical behavior. P1/P2 re-anchored under
+  consensus -> marker primary, models corrected.
+- Print-scale hint: all four marker-referenced checks lean +0.2-0.8% — weakly corroborates the
+  owner's ~49.9 mm ruler reading; LiDAR bounds any print error ≤~1%; keeping 50.0 per owner call.
+- Dataset state: sensor-vs-marker n=3 (owl + 2 counter), video marker-primary n=3 (sim + 2 real),
+  synthetic degradation n=2. Remaining manifest items (S1-S3, RESENT) deferred by owner.
+
+---
+
 ## 2026-07-12 (evening) — referral realism: default-settings videos validated synthetically; capture manifest finalized
 
 Owner insight: clinicians won't send 4K — factory default is 1080p/30, HDR ON, portrait, often

@@ -266,6 +266,9 @@ def main():
     ap.add_argument("--agree-warn", type=float, default=3.0, help="agreement %% above which confidence drops")
     ap.add_argument("--marker-mm", type=float, help="ArUco side length (mm): enables the marker anchor "
                     "(PRIMARY for external videos without VIO/LiDAR; cross-check otherwise)")
+    ap.add_argument("--anchor-policy", choices=["fixed", "consensus"], default="fixed",
+                    help="consensus: with 3 anchors, an agreeing pair outvotes a deviant "
+                         "(PROVISIONAL; default 'fixed' = VIO > marker > LiDAR)")
     args = ap.parse_args()
 
     sess = (REPO / args.session) if not Path(args.session).is_absolute() else Path(args.session)
@@ -293,19 +296,49 @@ def main():
             print(f"[anchor] {name}: unavailable — {a.get('note')}")
 
     # ---- selection + confidence -------------------------------------------------------- #
-    # Order: VIO (sensor path, richest cross-checks) > MARKER (0.27 mm-class DLT on a printed
-    # reference) > LiDAR (ray-median; near-field bias). Marker is the designed PRIMARY for
-    # external videos, where it is the only anchor.
+    # Fixed order (default): VIO > MARKER > LiDAR. Marker is the designed PRIMARY for external
+    # videos, where it is the only anchor.
+    # CONSENSUS policy (--anchor-policy consensus; PROVISIONAL pending owner ratification,
+    # motivated by the 07-13 validation batch: close-range/low-excitation captures showed VIO
+    # confidently ~6-8% small while LiDAR+marker agreed within 1.4% and matched the independent
+    # 96 mm design check): when >=2 anchors agree within --agree-warn and another deviates beyond
+    # it, primary = the agreeing pair's preferred member (marker > vio > lidar); the deviant is
+    # flagged in notes instead of silently winning by fixed order.
     notes = []
-    if vio["available"]:
-        primary, primary_name = vio, "vio_camera_path"
-    elif mrk["available"]:
-        primary, primary_name = mrk, "aruco_marker"
-    elif lid["available"]:
-        primary, primary_name = lid, "lidar_ray_median"
-    else:
+    avail = [(n, a) for n, a in (("vio_camera_path", vio), ("aruco_marker", mrk),
+                                 ("lidar_ray_median", lid)) if a["available"]]
+    if not avail:
         raise SystemExit("[anchor] NO metric anchor available — cannot scale this model "
                          "(external video needs --marker-mm with the printed sheet in frame)")
+    PREF = {"aruco_marker": 0, "vio_camera_path": 1, "lidar_ray_median": 2}
+    primary = primary_name = None
+    if args.anchor_policy == "consensus" and len(avail) >= 3:
+        pairs = []
+        for i in range(len(avail)):
+            for j in range(i + 1, len(avail)):
+                (n1, a1), (n2, a2) = avail[i], avail[j]
+                d = 100 * abs(a1["scale"] - a2["scale"]) / max(a1["scale"], a2["scale"])
+                pairs.append((d, n1, n2))
+        pairs.sort()
+        d, n1, n2 = pairs[0]
+        others = [n for n, _ in avail if n not in (n1, n2)]
+        if d <= args.agree_warn and others:
+            dev = others[0]
+            dev_scale = dict(avail)[dev]["scale"]
+            pair_mean = (dict(avail)[n1]["scale"] + dict(avail)[n2]["scale"]) / 2
+            dev_pct = 100 * abs(dev_scale - pair_mean) / pair_mean
+            if dev_pct > args.agree_warn:
+                primary_name = min((n1, n2), key=lambda n: PREF[n])
+                primary = dict(avail)[primary_name]
+                notes.append(f"CONSENSUS: {n1}+{n2} agree ({d:.1f}%); {dev} deviates {dev_pct:.1f}% "
+                             f"and was OUTVOTED (fixed order would have picked "
+                             f"{min((n for n, _ in avail), key=lambda n: PREF[n] if n != 'vio_camera_path' else -1)})")
+    if primary is None:
+        for want in ("vio_camera_path", "aruco_marker", "lidar_ray_median"):
+            hit = dict(avail).get(want)
+            if hit is not None:
+                primary, primary_name = hit, want
+                break
     S = primary["scale"]
 
     agreement_pct = None
