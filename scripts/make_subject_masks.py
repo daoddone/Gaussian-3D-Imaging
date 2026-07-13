@@ -58,6 +58,8 @@ def main():
 
     sess = REPO / args.session if not Path(args.session).is_absolute() else Path(args.session)
     sparse = sess / "metric" / "colmap" / "sparse" / "0"
+    if not (sparse / "images.bin").exists():   # T1/T16 anchor layout (session_sfm -> 04_metric_anchor)
+        sparse = sess / "metric_sfm" / "colmap" / "sparse" / "0"
     imgs = colmap_io.read_images_binary(sparse / "images.bin")
     cams = colmap_io.read_cameras_binary(sparse / "cameras.bin")
     pts = colmap_io.read_points3D_binary(sparse / "points3D.bin")
