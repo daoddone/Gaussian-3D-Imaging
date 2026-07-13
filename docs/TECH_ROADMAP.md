@@ -193,16 +193,16 @@ the settled metric strategy and needs none of these). Kept as notes for future r
   (c) DRY RUNS before offering externally: owner films 30-60 s native-camera orbit with the printed
   sheet -> end-to-end -> verify metric OBJ + frontal quality; repeat once under worse lighting.
   Context: Tepole follow-up offers this as his self-serve test ("send a video, get a metric mesh").
-- **T15. Burst economics: wake-on-capture / sleep-when-idle** (owner-proposed 07-11; DEFERRED until the
-  pipeline is recipe-stable — explicitly NOT while active development needs the box on). ~$2/h A6000
-  runs 24/7 ≈ $1.4k/mo vs 1–5 GPU-h per capture → auto on/off ≈ $150–300/mo, no accuracy impact.
-  Design sketch: (a) WAKE — the receiver lives on this box, so an off box can't hear uploads; either
-  app-initiated wake (capture app calls the Paperspace start-machine API, waits ~1–3 min boot, then
-  transmits — simplest, no new infra) or a tiny always-on relay / object-storage drop that the box
-  ingests on boot (most robust). (b) SLEEP — idle-shutdown systemd timer with four interlocks: active
-  SSH/desktop session, any pipeline process alive (run.py/train.py/watchers), a manual keepalive
-  hold-file, and N-minute empty-queue dwell. The interlocks are what make "forced off while coding"
-  impossible; build only after unattended end-to-end runs are routine.
+- **T15. Burst economics — ✅ SHIPPED 2026-07-13** (owner moved it up; docs/POWER_MANAGEMENT.md).
+  SLEEP: `pipeline-idle.timer` (5-min cadence), SIX interlocks + 30-min dwell — inbound SSH
+  (incl. VS Code remote via established :22, invisible to `who`), desktop INPUT idle via xprintidle
+  (session presence is permanent on the browser desktop — presence ≠ activity), pipeline/agent
+  processes, GPU util, hold-file (`pipeline-hold`/`release`), recent sessions/ writes. Manual:
+  `pipeline-off` (busy-refusing). WAKE: Mac kit `tools/mac/pipeline_box.sh` {on|off|status|send}
+  — Paperspace API/CLI start (machine ID = hostname pszf0re6sq9b) + wait-for-SSH + rsync into
+  sessions/; receiver is boot-enabled so app Transmit works post-wake. Interlocks live-verified;
+  FIRST real off/on cycle = owner's (in-session poweroff would kill the agent). ~$1.4k/mo → est.
+  $150–300/mo at current duty cycle.
 - **Feed-forward geometry notes (future reference, not priority):** VGGT (2503.11651), MASt3R
   (2406.09756), π³ (2507.13347), MoGe-2 (2507.02546) — all up-to-scale or in-domain-metric; would need
   our sensor anchor anyway. See MEASUREMENT_LITERATURE.md. Only revisit if the no-depth-sensor case
