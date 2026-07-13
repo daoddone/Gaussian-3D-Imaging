@@ -345,8 +345,14 @@ def main():
     if vio["available"] and lid["available"]:
         agreement_pct = 100 * abs(vio["scale"] - lid["scale"]) / S
         if agreement_pct > args.agree_warn:
-            notes.append(f"anchors disagree by {agreement_pct:.1f}% "
-                         f"(known near-field LiDAR bias signature if capture is close-range)")
+            # attribute correctly when a third anchor exists (07-13 field batch: LiDAR+marker agreed
+            # and VIO was the deviant — the old text blamed near-field LiDAR bias unconditionally)
+            if mrk["available"] and 100 * abs(mrk["scale"] - lid["scale"]) / lid["scale"] <= args.agree_warn:
+                notes.append(f"VIO vs LiDAR disagree by {agreement_pct:.1f}% and MARKER corroborates "
+                             f"LiDAR — VIO scale is the likely outlier (close-range/low-excitation regime)")
+            else:
+                notes.append(f"anchors disagree by {agreement_pct:.1f}% "
+                             f"(known near-field LiDAR bias signature if capture is close-range)")
     if lid.get("nearfield_warning"):
         notes.append("LiDAR samples are near-field (<0.25 m median) — LiDAR scale may read biased")
     if vio.get("umeyama_vs_pairwise_pct") and vio["umeyama_vs_pairwise_pct"] > 1.0:
